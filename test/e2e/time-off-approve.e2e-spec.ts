@@ -1,6 +1,28 @@
 import request from 'supertest';
-import { balances } from '../../src/database/schema';
+import { balances, hcmOutbox } from '../../src/database/schema';
+import { eq } from 'drizzle-orm';
 import { buildTestApp, TestContext } from '../helpers/test-app';
+
+async function setScenario(
+  mode:
+    | 'normal'
+    | 'force500'
+    | 'forceTimeout'
+    | 'forcePermanent'
+    | 'forceBadShape',
+): Promise<void> {
+  const response = await fetch(
+    `${process.env.HCM_MOCK_URL}/test/scenario`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    },
+  );
+  if (response.status !== 204) {
+    throw new Error(`Failed to set scenario: ${response.status}`);
+  }
+}
 
 describe('POST /requests/:id/approve', () => {
   let ctx: TestContext;
@@ -73,5 +95,35 @@ describe('POST /requests/:id/approve', () => {
       status: 'approved',
       hcmSyncStatus: 'synced',
     });
+  });
+
+  it('leaves approval locally committed with hcmSyncStatus=pending when HCM returns 500', async () => {
+    seedBalance('emp-approve-02', 'loc-BR', 'PTO', 10);
+    const pending = await createPendingRequest({
+      employeeId: 'emp-approve-02',
+      clientRequestId: 'client-approve-02',
+    });
+    await setScenario('force500');
+
+    const response = await request(ctx.app.getHttpServer())
+      .post(`/requests/${pending.id}/approve`)
+      .send();
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      id: pending.id,
+      status: 'approved',
+      hcmSyncStatus: 'pending',
+    });
+
+    const outboxRow = ctx.db
+      .select()
+      .from(hcmOutbox)
+      .where(eq(hcmOutbox.requestId, pending.id))
+      .get();
+    expect(outboxRow).toBeDefined();
+    expect(outboxRow?.status).toBe('failed_retryable');
+    expect(outboxRow?.attempts).toBe(1);
+    expect(outboxRow?.lastError).toMatch(/500/);
   });
 });

@@ -191,6 +191,50 @@ describe('POST /requests/:id/approve', () => {
     expect(outboxRow?.attempts).toBe(1);
   });
 
+  it('classifies an HCM call that exceeds the timeout budget as transient and keeps the outbox retryable', async () => {
+    seedBalance('emp-timeout', 'loc-BR', 'PTO', 10);
+    const pending = await createPendingRequest({
+      employeeId: 'emp-timeout',
+      clientRequestId: 'client-timeout-01',
+    });
+    await setScenario('forceTimeout');
+
+    const response = await request(ctx.app.getHttpServer())
+      .post(`/requests/${pending.id}/approve`)
+      .send();
+
+    // HcmClient's AbortController fires at HCM_TIMEOUT_MS (default
+    // 2000ms). Aborted fetch becomes 'transient' with reason
+    // 'timeout' (TRD §5) — local approval stands, outbox stays
+    // retryable for the worker to drain once HCM is healthy again.
+    // Reset the scenario back to 'normal' so subsequent specs in
+    // the file do not hold their connections open waiting on the
+    // mock's 30s timeout branch.
+    await setScenario('normal');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      id: pending.id,
+      status: 'approved',
+      hcmSyncStatus: 'pending',
+    });
+
+    const outboxRow = ctx.db
+      .select()
+      .from(hcmOutbox)
+      .where(eq(hcmOutbox.requestId, pending.id))
+      .get();
+    expect(outboxRow?.status).toBe('failed_retryable');
+    // The HcmClient classifies the abort as either 'timeout' (when
+    // err.name === 'AbortError' surfaces cleanly) or 'network' (when
+    // the underlying fetch wraps the abort as a TypeError/DOMException
+    // depending on the runtime). Both are valid transient outcomes
+    // for §15's "HCM timeout" scenario — the §15 invariant is that
+    // the outbox stays retryable, not the exact reason string.
+    expect(outboxRow?.lastError).toMatch(/timeout|network/i);
+    expect(outboxRow?.attempts).toBe(1);
+  }, 10_000);
+
   it('serialises concurrent approvals so one wins and the other returns INVALID_TRANSITION', async () => {
     seedBalance('emp-concurrent', 'loc-BR', 'PTO', 10);
     const pending = await createPendingRequest({

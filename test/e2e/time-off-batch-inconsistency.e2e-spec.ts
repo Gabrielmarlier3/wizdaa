@@ -1,25 +1,14 @@
+import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import request from 'supertest';
-import { balances, inconsistencies } from '../../src/database/schema';
+import {
+  approvedDeductions,
+  balances,
+  hcmOutbox,
+  inconsistencies,
+  requests,
+} from '../../src/database/schema';
 import { buildTestApp, TestContext } from '../helpers/test-app';
-
-type Scenario =
-  | 'normal'
-  | 'force500'
-  | 'forceTimeout'
-  | 'forcePermanent'
-  | 'forceBadShape';
-
-async function setScenario(mode: Scenario): Promise<void> {
-  const res = await fetch(`${process.env.HCM_MOCK_URL}/test/scenario`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode }),
-  });
-  if (res.status !== 204) {
-    throw new Error(`setScenario ${mode}: ${res.status}`);
-  }
-}
 
 /**
  * End-to-end user journey: an approved-not-yet-pushed deduction
@@ -28,6 +17,13 @@ async function setScenario(mode: Scenario): Promise<void> {
  * the flagged dimension blocks further approvals; a clean batch
  * auto-clears the flag and the next approve succeeds (TRD §3.5
  * + §9 decision 14).
+ *
+ * The first "approved-not-yet-pushed" state is seeded directly
+ * against the DB rather than driven through the approve flow with
+ * a forced HCM failure — the test's intent is "halt + auto-clear
+ * through the HTTP surface", and coupling the scenario to the
+ * mock's transient-failure injection would let a mock regression
+ * mask a halt regression.
  */
 describe('batch intake ↔ approve halt ↔ auto-clear', () => {
   let ctx: TestContext;
@@ -41,15 +37,60 @@ describe('batch intake ↔ approve halt ↔ auto-clear', () => {
     await ctx.close();
   });
 
+  const dim = {
+    employeeId: 'emp-flow',
+    locationId: 'loc-BR',
+    leaveType: 'PTO',
+  } as const;
+
   function seedBalance(hcmBalance: number): void {
     ctx.db
       .insert(balances)
       .values({
-        employeeId: 'emp-flow',
-        locationId: 'loc-BR',
-        leaveType: 'PTO',
+        ...dim,
         hcmBalance,
         updatedAt: new Date().toISOString(),
+      })
+      .run();
+  }
+
+  function seedApprovedNotYetPushed(days: number): void {
+    const requestId = randomUUID();
+    ctx.db
+      .insert(requests)
+      .values({
+        id: requestId,
+        ...dim,
+        startDate: '2026-05-01',
+        endDate: '2026-05-02',
+        days,
+        status: 'approved',
+        hcmSyncStatus: 'pending',
+        clientRequestId: `client-seeded-${requestId}`,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    ctx.db
+      .insert(approvedDeductions)
+      .values({
+        id: randomUUID(),
+        requestId,
+        ...dim,
+        days,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    ctx.db
+      .insert(hcmOutbox)
+      .values({
+        id: randomUUID(),
+        requestId,
+        idempotencyKey: randomUUID(),
+        payloadJson: '{}',
+        status: 'pending',
+        attempts: 0,
+        nextAttemptAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
       })
       .run();
   }
@@ -60,9 +101,9 @@ describe('batch intake ↔ approve halt ↔ auto-clear', () => {
       .from(inconsistencies)
       .where(
         and(
-          eq(inconsistencies.employeeId, 'emp-flow'),
-          eq(inconsistencies.locationId, 'loc-BR'),
-          eq(inconsistencies.leaveType, 'PTO'),
+          eq(inconsistencies.employeeId, dim.employeeId),
+          eq(inconsistencies.locationId, dim.locationId),
+          eq(inconsistencies.leaveType, dim.leaveType),
         ),
       )
       .get();
@@ -72,11 +113,9 @@ describe('batch intake ↔ approve halt ↔ auto-clear', () => {
     const res = await request(ctx.app.getHttpServer())
       .post('/requests')
       .send({
-        employeeId: 'emp-flow',
-        locationId: 'loc-BR',
-        leaveType: 'PTO',
-        startDate: '2026-05-01',
-        endDate: '2026-05-02',
+        ...dim,
+        startDate: '2026-05-10',
+        endDate: '2026-05-11',
         days,
         clientRequestId,
       });
@@ -86,77 +125,46 @@ describe('batch intake ↔ approve halt ↔ auto-clear', () => {
 
   it('halts approvals on flagged dimensions and resumes them when a clean batch clears the flag', async () => {
     seedBalance(10);
+    // Six approved days already committed locally; their outbox
+    // row is still pending so they count toward
+    // approvedNotYetPushedDays.
+    seedApprovedNotYetPushed(6);
 
-    const first = await createPending('client-flow-first', 6);
+    const pending = await createPending('client-flow-halt', 2);
 
-    // Force the first approve's inline HCM push to fail transiently
-    // so its outbox stays non-synced and the approved deduction keeps
-    // counting in the overlay — otherwise the §3.5 predicate never
-    // fires in the next step.
-    await setScenario('force500');
-    const firstApprove = await request(ctx.app.getHttpServer())
-      .post(`/requests/${first.id}/approve`)
-      .send();
-    expect(firstApprove.status).toBe(200);
-    expect(firstApprove.body).toMatchObject({
-      status: 'approved',
-      hcmSyncStatus: 'pending',
-    });
-    await setScenario('normal');
-
-    const second = await createPending('client-flow-second', 2);
-
-    // Batch shrinks the HCM balance below approvedNotYetPushed=6
-    // → predicate 4 − 6 = −2 < 0 → flag the dimension.
+    // HCM sends a lower balance. Predicate 4 − 6 = −2 < 0 → flag.
     const shrink = await request(ctx.app.getHttpServer())
       .post('/hcm/balances/batch')
       .send({
         generatedAt: '2026-04-24T12:00:00.000Z',
-        balances: [
-          {
-            employeeId: 'emp-flow',
-            locationId: 'loc-BR',
-            leaveType: 'PTO',
-            balance: 4,
-          },
-        ],
+        balances: [{ ...dim, balance: 4 }],
       });
     expect(shrink.status).toBe(201);
     expect(shrink.body).toEqual({ replaced: 1, inconsistenciesDetected: 1 });
     expect(getInconsistency()).toBeDefined();
 
-    const haltedApprove = await request(ctx.app.getHttpServer())
-      .post(`/requests/${second.id}/approve`)
+    const halted = await request(ctx.app.getHttpServer())
+      .post(`/requests/${pending.id}/approve`)
       .send();
-    expect(haltedApprove.status).toBe(409);
-    expect(haltedApprove.body).toMatchObject({
+    expect(halted.status).toBe(409);
+    expect(halted.body).toMatchObject({
       code: 'DIMENSION_INCONSISTENT',
-      employeeId: 'emp-flow',
-      locationId: 'loc-BR',
-      leaveType: 'PTO',
+      ...dim,
     });
 
-    // Clean batch — balance 10 restored → 10 − 6 = 4 ≥ 0 → predicate
-    // does not fire → auto-clear.
+    // HCM restores the balance. Predicate 10 − 6 = 4 ≥ 0 → clear.
     const restore = await request(ctx.app.getHttpServer())
       .post('/hcm/balances/batch')
       .send({
         generatedAt: '2026-04-24T13:00:00.000Z',
-        balances: [
-          {
-            employeeId: 'emp-flow',
-            locationId: 'loc-BR',
-            leaveType: 'PTO',
-            balance: 10,
-          },
-        ],
+        balances: [{ ...dim, balance: 10 }],
       });
     expect(restore.status).toBe(201);
     expect(restore.body).toEqual({ replaced: 1, inconsistenciesDetected: 0 });
     expect(getInconsistency()).toBeUndefined();
 
     const resumed = await request(ctx.app.getHttpServer())
-      .post(`/requests/${second.id}/approve`)
+      .post(`/requests/${pending.id}/approve`)
       .send();
     expect(resumed.status).toBe(200);
     expect(resumed.body).toMatchObject({

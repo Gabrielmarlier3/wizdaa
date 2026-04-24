@@ -29,11 +29,15 @@ npm run start:dev          # Nest with file watch on http://localhost:3000
 
 Environment variables (all optional):
 
-| Variable         | Default            | Purpose                              |
-| ---------------- | ------------------ | ------------------------------------ |
-| `PORT`           | `3000`             | HTTP port the Nest app binds to.     |
-| `DB_PATH`        | `./wizdaa.db`      | SQLite file path.                    |
-| `HCM_MOCK_PORT`  | `4000`             | Port the standalone mock HCM binds.  |
+| Variable          | Default                    | Purpose                                                                                                                                                                                                       |
+| ----------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`            | `3000`                     | HTTP port the Nest app binds to.                                                                                                                                                                              |
+| `DB_PATH`         | `./wizdaa.db`              | SQLite file path.                                                                                                                                                                                             |
+| `HCM_BASE_URL`    | falls back to `HCM_MOCK_URL` then `http://127.0.0.1:4100` | Base URL the `HcmClient` uses to reach the real or mocked HCM for the outbound realtime mutation endpoint.                                                                     |
+| `HCM_MOCK_URL`    | _(unset)_                  | Used as the `HcmClient` base URL when `HCM_BASE_URL` is unset — convenient for local runs against the mock without touching prod env vars.                                                                    |
+| `HCM_TIMEOUT_MS`  | `2000`                     | Bounded fetch timeout for each outbound HCM call. Exceeding it produces a `transient` result that flows into the outbox's `failed_retryable` state (TRD §5).                                                  |
+| `HCM_MOCK_PORT`   | `4000`                     | Port the standalone mock HCM binds when started via `npm run hcm-mock`. The e2e globalSetup uses `4100` to avoid collisions with a manually-started mock.                                                      |
+| `NODE_ENV`        | _(unset / `production`)_   | When set to `test` the `HcmOutboxWorker` does **not** auto-start its polling `setInterval` in `onModuleInit`. Jest sets this automatically; set it manually in any test harness that boots the real `AppModule`. |
 
 Database workflow:
 

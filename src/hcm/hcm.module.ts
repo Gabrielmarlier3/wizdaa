@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { HcmClient, HCM_BASE_URL, HCM_TIMEOUT_MS } from './hcm.client';
 import { HcmOutboxRepository } from './repositories/hcm-outbox.repository';
+import { InconsistenciesRepository } from './repositories/inconsistencies.repository';
 
 @Module({
   providers: [
@@ -17,7 +18,8 @@ import { HcmOutboxRepository } from './repositories/hcm-outbox.repository';
     },
     HcmClient,
     HcmOutboxRepository,
+    InconsistenciesRepository,
   ],
-  exports: [HcmClient, HcmOutboxRepository],
+  exports: [HcmClient, HcmOutboxRepository, InconsistenciesRepository],
 })
 export class HcmModule {}

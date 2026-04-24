@@ -1,4 +1,10 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { DATABASE } from '../database/database.module';
 import { Db } from '../database/connection';
 import {
@@ -23,6 +29,7 @@ export { HcmOutboxDueRow } from '../time-off/repositories/hcm-outbox.repository'
 export const MAX_ATTEMPTS = 5;
 export const BACKOFF_BASE_MS = 30_000;
 export const BATCH_SIZE = 10;
+export const POLL_MS = 5_000;
 
 interface StoredPayload {
   employeeId: string;
@@ -34,8 +41,9 @@ interface StoredPayload {
 }
 
 @Injectable()
-export class HcmOutboxWorker {
+export class HcmOutboxWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(HcmOutboxWorker.name);
+  private interval?: NodeJS.Timeout;
 
   constructor(
     @Inject(DATABASE) private readonly db: Db,
@@ -43,6 +51,31 @@ export class HcmOutboxWorker {
     private readonly requestsRepo: RequestsRepository,
     private readonly hcmClient: HcmClient,
   ) {}
+
+  /**
+   * Start the polling interval in non-test environments. Tests drive
+   * `tick()` manually via `app.get(HcmOutboxWorker)` so we avoid
+   * racing setInterval callbacks with `afterEach` teardown.
+   */
+  onModuleInit(): void {
+    if (process.env.NODE_ENV === 'test') {
+      return;
+    }
+    this.interval = setInterval(() => {
+      void this.tick().catch((err) =>
+        this.logger.error(
+          `outbox worker tick failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+    }, POLL_MS);
+  }
+
+  onModuleDestroy(): void {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = undefined;
+    }
+  }
 
   /**
    * One pass over the outbox: claim due rows, push each via the HCM

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import BetterSqlite3 from 'better-sqlite3';
 import { Inject, Injectable } from '@nestjs/common';
 import { DATABASE } from '../database/database.module';
 import { Db } from '../database/connection';
@@ -32,6 +33,14 @@ export interface CreateRequestCommand {
   clientRequestId: string;
 }
 
+function isClientRequestIdDuplicate(err: unknown): boolean {
+  return (
+    err instanceof BetterSqlite3.SqliteError &&
+    err.code === 'SQLITE_CONSTRAINT_UNIQUE' &&
+    err.message.includes('requests.client_request_id')
+  );
+}
+
 @Injectable()
 export class CreateRequestUseCase {
   constructor(
@@ -42,66 +51,87 @@ export class CreateRequestUseCase {
   ) {}
 
   execute(cmd: CreateRequestCommand): TimeOffRequest {
-    // Client-UUID idempotency (TRD §9 *Dual idempotency*). Lookup is
-    // outside the transaction because it is a read; a duplicate POST
-    // returns the same entity without re-running the balance check.
-    const existing = this.requestsRepo.findByClientRequestId(
-      cmd.clientRequestId,
-    );
-    if (existing) {
-      return existing;
-    }
-
-    const balance = this.balancesRepo.findByDimension(
-      cmd.employeeId,
-      cmd.locationId,
-      cmd.leaveType,
-    );
-    if (!balance) {
-      throw new InvalidDimensionError(
-        `No balance record for (${cmd.employeeId}, ${cmd.locationId}, ${cmd.leaveType})`,
-      );
-    }
-
-    const pendingDays = this.holdsRepo.sumActiveHoldDaysForDimension(
-      cmd.employeeId,
-      cmd.locationId,
-      cmd.leaveType,
-    );
-    // Approved-not-yet-pushed overlay lands with the approve slice.
-    const approvedNotYetPushedDays = 0;
-
-    const sufficient = hasSufficientBalance(
-      {
-        hcmBalance: balance.hcmBalance,
-        pendingDays,
-        approvedNotYetPushedDays,
-      },
-      cmd.days,
-    );
-    if (!sufficient) {
-      throw new InsufficientBalanceError(
-        `Insufficient balance for (${cmd.employeeId}, ${cmd.locationId}, ${cmd.leaveType})`,
-      );
-    }
-
-    const request = createPendingRequest({
-      id: randomUUID(),
-      employeeId: cmd.employeeId,
-      locationId: cmd.locationId,
-      leaveType: cmd.leaveType,
-      startDate: cmd.startDate,
-      endDate: cmd.endDate,
-      days: cmd.days,
-      clientRequestId: cmd.clientRequestId,
-      now: new Date().toISOString(),
-    });
-
-    // Atomic insert — the request row and its hold row are either
-    // both present or both absent (TRD §9 *Reserve balance at
+    // Read-validate-insert runs inside one transaction so the
+    // balance projection is stable against concurrent writers and
+    // the approve slice's HCM awaits cannot later break the check
+    // silently (TRD §8.4 consistency, §9 *Reserve balance at
     // creation as pending hold*).
-    this.db.transaction((tx) => {
-      this.requestsRepo.insert(request, tx);
+    return this.db.transaction((tx) => {
+      const existing = this.requestsRepo.findByClientRequestId(
+        cmd.clientRequestId,
+        tx,
+      );
+      if (existing) {
+        return existing;
+      }
+
+      const balance = this.balancesRepo.findByDimension(
+        cmd.employeeId,
+        cmd.locationId,
+        cmd.leaveType,
+        tx,
+      );
+      if (!balance) {
+        throw new InvalidDimensionError(
+          `No balance record for (${cmd.employeeId}, ${cmd.locationId}, ${cmd.leaveType})`,
+        );
+      }
+
+      const pendingDays = this.holdsRepo.sumActiveHoldDaysForDimension(
+        cmd.employeeId,
+        cmd.locationId,
+        cmd.leaveType,
+        tx,
+      );
+      // Approved-not-yet-pushed overlay lands with the approve slice.
+      const approvedNotYetPushedDays = 0;
+
+      if (
+        !hasSufficientBalance(
+          {
+            hcmBalance: balance.hcmBalance,
+            pendingDays,
+            approvedNotYetPushedDays,
+          },
+          cmd.days,
+        )
+      ) {
+        throw new InsufficientBalanceError(
+          `Insufficient balance for (${cmd.employeeId}, ${cmd.locationId}, ${cmd.leaveType})`,
+        );
+      }
+
+      const request = createPendingRequest({
+        id: randomUUID(),
+        employeeId: cmd.employeeId,
+        locationId: cmd.locationId,
+        leaveType: cmd.leaveType,
+        startDate: cmd.startDate,
+        endDate: cmd.endDate,
+        days: cmd.days,
+        clientRequestId: cmd.clientRequestId,
+        now: new Date().toISOString(),
+      });
+
+      try {
+        this.requestsRepo.insert(request, tx);
+      } catch (err) {
+        // Cross-process race: another writer committed the same
+        // clientRequestId between our read and our insert. The
+        // UNIQUE constraint is the authoritative guard; recover by
+        // reading the winning row and returning it idempotently.
+        if (isClientRequestIdDuplicate(err)) {
+          const stored = this.requestsRepo.findByClientRequestId(
+            cmd.clientRequestId,
+            tx,
+          );
+          if (stored) {
+            return stored;
+          }
+        }
+        throw err;
+      }
+
       this.holdsRepo.insert(
         {
           id: randomUUID(),
@@ -113,8 +143,8 @@ export class CreateRequestUseCase {
         },
         tx,
       );
-    });
 
-    return request;
+      return request;
+    });
   }
 }

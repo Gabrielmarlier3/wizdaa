@@ -16,7 +16,7 @@ export class BalanceController {
   constructor(private readonly getBalance: GetBalanceUseCase) {}
 
   @Get()
-  read(@Query() query: GetBalanceQueryDto): BalanceProjection {
+  get(@Query() query: GetBalanceQueryDto): BalanceProjection {
     try {
       return this.getBalance.execute(query);
     } catch (err) {

@@ -126,8 +126,15 @@ describe('GET /balance', () => {
         requestId,
         idempotencyKey: randomUUID(),
         payloadJson: '{}',
-        status: 'failed_retryable',
-        attempts: 1,
+        // 'pending' is the natural pre-push state and the simpler
+        // case the projection filter covers — the test's intent is
+        // "deduction visible while the push hasn't succeeded yet".
+        // 'failed_retryable' would equally pass the filter but
+        // conflates "hasn't been pushed" with "was attempted and
+        // failed", and would silently break if future slices add
+        // NOT NULL constraints on last_error / attempts.
+        status: 'pending',
+        attempts: 0,
         nextAttemptAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
       })

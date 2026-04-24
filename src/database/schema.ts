@@ -6,18 +6,12 @@ import {
   sqliteTable,
   text,
 } from 'drizzle-orm/sqlite-core';
-import { requestStatusValues } from '../domain/request';
+import {
+  hcmSyncStatusValues,
+  requestStatusValues,
+} from '../domain/request';
 
-export type { RequestStatus } from '../domain/request';
-
-export const hcmSyncStatusValues = [
-  'not_required',
-  'pending',
-  'synced',
-  'failed',
-] as const;
-
-export type HcmSyncStatus = (typeof hcmSyncStatusValues)[number];
+export type { HcmSyncStatus, RequestStatus } from '../domain/request';
 
 export const hcmOutboxStatusValues = [
   'pending',

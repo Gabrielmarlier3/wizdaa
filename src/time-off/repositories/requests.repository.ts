@@ -3,7 +3,11 @@ import { eq } from 'drizzle-orm';
 import { DATABASE } from '../../database/database.module';
 import { Db } from '../../database/connection';
 import { requests } from '../../database/schema';
-import { RequestStatus, TimeOffRequest } from '../../domain/request';
+import {
+  HcmSyncStatus,
+  RequestStatus,
+  TimeOffRequest,
+} from '../../domain/request';
 
 type RequestRow = typeof requests.$inferSelect;
 
@@ -35,6 +39,7 @@ export class RequestsRepository {
         endDate: request.endDate,
         days: request.days,
         status: request.status,
+        hcmSyncStatus: request.hcmSyncStatus,
         clientRequestId: request.clientRequestId,
         createdAt: request.createdAt,
       })
@@ -51,6 +56,7 @@ export class RequestsRepository {
       endDate: row.endDate,
       days: row.days,
       status: row.status as RequestStatus,
+      hcmSyncStatus: row.hcmSyncStatus as HcmSyncStatus,
       clientRequestId: row.clientRequestId,
       createdAt: row.createdAt,
     };

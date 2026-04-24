@@ -2,6 +2,7 @@ import {
   Body,
   ConflictException,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   NotFoundException,
@@ -20,6 +21,7 @@ import {
 } from './create-request.use-case';
 import { CreateRequestDto } from './dto/create-request.dto';
 import { RequestNotFoundError } from './errors';
+import { GetRequestUseCase } from './get-request.use-case';
 import { RejectRequestUseCase } from './reject-request.use-case';
 
 @Controller('requests')
@@ -29,7 +31,23 @@ export class TimeOffController {
     private readonly approveRequest: ApproveRequestUseCase,
     private readonly rejectRequest: RejectRequestUseCase,
     private readonly cancelRequest: CancelRequestUseCase,
+    private readonly getRequest: GetRequestUseCase,
   ) {}
+
+  @Get(':id')
+  get(@Param('id', ParseUUIDPipe) id: string): TimeOffRequest {
+    try {
+      return this.getRequest.execute({ requestId: id });
+    } catch (err) {
+      if (err instanceof RequestNotFoundError) {
+        throw new NotFoundException({
+          code: 'REQUEST_NOT_FOUND',
+          message: err.message,
+        });
+      }
+      throw err;
+    }
+  }
 
   @Post()
   create(@Body() dto: CreateRequestDto): TimeOffRequest {

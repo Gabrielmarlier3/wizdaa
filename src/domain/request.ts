@@ -118,3 +118,21 @@ export function rejectPendingRequest(request: TimeOffRequest): TimeOffRequest {
     status: 'rejected',
   };
 }
+
+/**
+ * Cancellation transition. Employee-initiated; terminal. Structurally
+ * mirrors rejectPendingRequest — same flow (release hold in the
+ * surrounding transaction), same non-touch of `hcmSyncStatus`
+ * (a pending request was never pushed to HCM). Distinct from reject
+ * at the audit level per TRD §9 *Cancellation is a distinct terminal
+ * state from rejection*.
+ */
+export function cancelPendingRequest(request: TimeOffRequest): TimeOffRequest {
+  if (request.status !== 'pending') {
+    throw new InvalidTransitionError(request.status, 'cancelled');
+  }
+  return {
+    ...request,
+    status: 'cancelled',
+  };
+}

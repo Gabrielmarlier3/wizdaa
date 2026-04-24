@@ -1,5 +1,6 @@
 import {
   approvePendingRequest,
+  cancelPendingRequest,
   createPendingRequest,
   CreateRequestInput,
   InvalidRequestError,
@@ -208,6 +209,79 @@ describe('rejectPendingRequest', () => {
       const ite = err as InvalidTransitionError;
       expect(ite.from).toBe('approved');
       expect(ite.to).toBe('rejected');
+    }
+  });
+});
+
+describe('cancelPendingRequest', () => {
+  const pending: TimeOffRequest = createPendingRequest({
+    id: 'req-4',
+    employeeId: 'emp-1',
+    locationId: 'loc-1',
+    leaveType: 'PTO',
+    startDate: '2026-05-01',
+    endDate: '2026-05-02',
+    days: 2,
+    clientRequestId: 'client-4',
+    now: '2026-04-24T12:00:00Z',
+  });
+
+  it('transitions status pending → cancelled and leaves hcmSyncStatus at not_required', () => {
+    const cancelled = cancelPendingRequest(pending);
+    expect(cancelled.status).toBe('cancelled');
+    expect(cancelled.hcmSyncStatus).toBe('not_required');
+  });
+
+  it('preserves all other fields of the original request', () => {
+    const cancelled = cancelPendingRequest(pending);
+    expect(cancelled).toEqual({
+      ...pending,
+      status: 'cancelled',
+    });
+  });
+
+  it('throws InvalidTransitionError when the request is already approved', () => {
+    const approved: TimeOffRequest = {
+      ...pending,
+      status: 'approved',
+      hcmSyncStatus: 'pending',
+    };
+    expect(() => cancelPendingRequest(approved)).toThrow(
+      InvalidTransitionError,
+    );
+  });
+
+  it('throws InvalidTransitionError when the request is rejected', () => {
+    const rejected: TimeOffRequest = { ...pending, status: 'rejected' };
+    expect(() => cancelPendingRequest(rejected)).toThrow(
+      InvalidTransitionError,
+    );
+  });
+
+  it('throws InvalidTransitionError when the request is already cancelled', () => {
+    const alreadyCancelled: TimeOffRequest = {
+      ...pending,
+      status: 'cancelled',
+    };
+    expect(() => cancelPendingRequest(alreadyCancelled)).toThrow(
+      InvalidTransitionError,
+    );
+  });
+
+  it('carries the from/to statuses on the thrown error', () => {
+    const approved: TimeOffRequest = {
+      ...pending,
+      status: 'approved',
+      hcmSyncStatus: 'pending',
+    };
+    try {
+      cancelPendingRequest(approved);
+      fail('expected InvalidTransitionError to be thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(InvalidTransitionError);
+      const ite = err as InvalidTransitionError;
+      expect(ite.from).toBe('approved');
+      expect(ite.to).toBe('cancelled');
     }
   });
 });

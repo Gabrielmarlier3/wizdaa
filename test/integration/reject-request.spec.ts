@@ -1,13 +1,7 @@
 import { eq } from 'drizzle-orm';
-import {
-  balances,
-  holds,
-  requests,
-} from '../../src/database/schema';
+import { balances, holds, requests } from '../../src/database/schema';
 import { CreateRequestUseCase } from '../../src/time-off/create-request.use-case';
-import {
-  RejectRequestUseCase,
-} from '../../src/time-off/reject-request.use-case';
+import { RejectRequestUseCase } from '../../src/time-off/reject-request.use-case';
 import { InvalidTransitionError } from '../../src/domain/request';
 import { buildTestApp, TestContext } from '../helpers/test-app';
 

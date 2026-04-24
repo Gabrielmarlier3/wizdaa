@@ -2,10 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { DATABASE } from '../database/database.module';
 import { Db } from '../database/connection';
-import {
-  createPendingRequest,
-  TimeOffRequest,
-} from '../domain/request';
+import { createPendingRequest, TimeOffRequest } from '../domain/request';
 import { hasSufficientBalance } from '../domain/balance';
 import { BalancesRepository } from './repositories/balances.repository';
 import { HoldsRepository } from './repositories/holds.repository';

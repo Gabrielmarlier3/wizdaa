@@ -14,9 +14,7 @@ export interface BalanceProjectionInput {
 }
 
 export function availableBalance(input: BalanceProjectionInput): number {
-  return (
-    input.hcmBalance - input.pendingDays - input.approvedNotYetPushedDays
-  );
+  return input.hcmBalance - input.pendingDays - input.approvedNotYetPushedDays;
 }
 
 export function hasSufficientBalance(

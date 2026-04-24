@@ -1,8 +1,5 @@
 import BetterSqlite3, { Database as BetterSqlite3Db } from 'better-sqlite3';
-import {
-  drizzle,
-  BetterSQLite3Database,
-} from 'drizzle-orm/better-sqlite3';
+import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema';
 
 export type Db = BetterSQLite3Database<typeof schema>;

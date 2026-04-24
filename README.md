@@ -271,6 +271,50 @@ open questions.
 
 See [TRD.md](./TRD.md).
 
+## Agentic development process
+
+The challenge brief asks for agentic development; this repository
+treats that as an engineering discipline, not a shortcut. Every
+feature slice passes through a structured cycle:
+
+1. **Architect brief** — a read-only subagent produces a
+   first-principles scoping + risk analysis before planning.
+   The output is preserved verbatim as Appendix A of the slice
+   plan so future readers see the reasoning exactly as it was.
+2. **Plan mode** — the plan body synthesises the architect
+   brief with user-locked decisions, enumerates the commits
+   (each red→green), names out-of-scope items, and lists the
+   pre-push checklist.
+3. **TDD loop** — failing spec first, then implementation,
+   repeated per commit. `typecheck` / `lint` / `test` /
+   `test:e2e` must be green on every commit claiming green.
+4. **Reviewer pass** — a read-only subagent audits the full
+   diff before push. Findings are triaged blocking / should
+   fix / nit. Applied fixes become follow-up commits inside
+   Phase B; deferrals are documented in the devlog.
+5. **Wrap** — the devlog gets a session entry; the plan is
+   archived under `docs/plans/` with a stable numeric prefix.
+
+Artefacts:
+
+- [`docs/plans/`](./docs/plans/) — one archived plan per slice
+  (001 through 011), each with Appendix A holding the architect
+  brief. `docs/plans/README.md` is the index.
+- [`docs/devlog.md`](./docs/devlog.md) — chronological session
+  log: what got done, what deviated from the plan, what the
+  reviewer flagged, what got deferred and why.
+- [`docs/process.md`](./docs/process.md) — the slice template
+  + subagent discipline rules distilled from plan 005.
+- [`docs/coverage.md`](./docs/coverage.md) — curated coverage
+  snapshot (proof-of-coverage deliverable).
+- [`.claude/agents/`](./.claude/agents/) — definitions for the
+  six subagents named in [CLAUDE.md](./CLAUDE.md) (architect,
+  reviewer, domain-data, api-contract, sync-integration,
+  test-qa).
+- [`CLAUDE.md`](./CLAUDE.md) — operational guardrails:
+  subagent discipline, hard guardrails distilled from
+  INSTRUCTIONS.md, language and tone rules.
+
 ## Engineering principles
 
 See [INSTRUCTIONS.md](./INSTRUCTIONS.md) for scope, decision rules,

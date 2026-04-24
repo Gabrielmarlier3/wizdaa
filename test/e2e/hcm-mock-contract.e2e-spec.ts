@@ -28,17 +28,14 @@ describe('Mock HCM contract', () => {
     };
     const key = 'idempotency-key-dedup-01';
 
-    const first = await fetch(
-      `${process.env.HCM_MOCK_URL}/balance/mutations`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': key,
-        },
-        body: JSON.stringify(body),
+    const first = await fetch(`${process.env.HCM_MOCK_URL}/balance/mutations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': key,
       },
-    );
+      body: JSON.stringify(body),
+    });
     expect(first.status).toBe(200);
     const firstBody = (await first.json()) as { hcmMutationId: string };
     expect(firstBody.hcmMutationId).toEqual(expect.any(String));
@@ -79,17 +76,14 @@ describe('Mock HCM contract', () => {
     };
 
     const makeCall = async (key: string): Promise<string> => {
-      const res = await fetch(
-        `${process.env.HCM_MOCK_URL}/balance/mutations`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Idempotency-Key': key,
-          },
-          body: JSON.stringify(body),
+      const res = await fetch(`${process.env.HCM_MOCK_URL}/balance/mutations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': key,
         },
-      );
+        body: JSON.stringify(body),
+      });
       expect(res.status).toBe(200);
       const parsed = (await res.json()) as { hcmMutationId: string };
       return parsed.hcmMutationId;
@@ -117,17 +111,14 @@ describe('Mock HCM contract', () => {
     };
     const key = 'idempotency-key-perm-01';
 
-    const first = await fetch(
-      `${process.env.HCM_MOCK_URL}/balance/mutations`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': key,
-        },
-        body: JSON.stringify(body),
+    const first = await fetch(`${process.env.HCM_MOCK_URL}/balance/mutations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': key,
       },
-    );
+      body: JSON.stringify(body),
+    });
     expect(first.status).toBe(409);
     const firstBody = await first.json();
 
@@ -157,20 +148,17 @@ describe('Mock HCM contract', () => {
   });
 
   it('rejects a POST /balance/mutations without an Idempotency-Key header', async () => {
-    const res = await fetch(
-      `${process.env.HCM_MOCK_URL}/balance/mutations`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          employeeId: 'emp',
-          locationId: 'loc',
-          leaveType: 'PTO',
-          days: -1,
-          clientMutationId: 'c1',
-        }),
-      },
-    );
+    const res = await fetch(`${process.env.HCM_MOCK_URL}/balance/mutations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employeeId: 'emp',
+        locationId: 'loc',
+        leaveType: 'PTO',
+        days: -1,
+        clientMutationId: 'c1',
+      }),
+    });
     expect(res.status).toBe(400);
   });
 });

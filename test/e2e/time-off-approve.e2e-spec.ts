@@ -16,14 +16,11 @@ async function setScenario(
     | 'forcePermanent'
     | 'forceBadShape',
 ): Promise<void> {
-  const response = await fetch(
-    `${process.env.HCM_MOCK_URL}/test/scenario`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode }),
-    },
-  );
+  const response = await fetch(`${process.env.HCM_MOCK_URL}/test/scenario`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  });
   if (response.status !== 204) {
     throw new Error(`Failed to set scenario: ${response.status}`);
   }

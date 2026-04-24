@@ -85,7 +85,10 @@ export function createMockHcmServer(): Express {
       'forceBadShape',
     ];
     if (typeof mode !== 'string' || !allowed.includes(mode as Scenario)) {
-      res.status(400).json({ code: 'INVALID_MODE', message: `Expected one of ${allowed.join(', ')}` });
+      res.status(400).json({
+        code: 'INVALID_MODE',
+        message: `Expected one of ${allowed.join(', ')}`,
+      });
       return;
     }
     state.scenario = mode as Scenario;

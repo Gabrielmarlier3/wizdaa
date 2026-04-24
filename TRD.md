@@ -185,47 +185,228 @@ Entry template:
 >   single public context statement; `notes/CHALLENGE.md` exists locally
 >   for faithful lookup.
 
+> **2026-04-24 — Reserve balance at creation as pending hold**
+> - **Decision:** a request is reserved on creation as a *pending hold*
+>   ledger line, distinct from an *approved deduction*. Employee-visible
+>   available balance =
+>   `hcmBalance − pendingReservations − approvedNotYetPushed`.
+>   On rejection or cancellation the hold is released; on approval it
+>   converts to an approved deduction.
+> - **Reason:** §8.4 (consistency rule) mandates designing against
+>   concurrency and duplication; a local two-state ledger is the
+>   simplest mechanism that closes the double-spend window where two
+>   concurrent pending requests pass the approval-time check
+>   independently. §8.2 prefers simpler correct designs; a two-state
+>   ledger is easier to reason about than optimistic approval-time
+>   locking. The employee-instant-feedback user need in the brief
+>   requires the reservation to be visible immediately, not only after
+>   manager action.
+> - **Alternatives considered:**
+>   - *Decrement only on approval.* Rejected: leaves the window between
+>     pending and approval unprotected; two pending 8-day requests
+>     against 10 days can both pass the approval-time check if
+>     approvals interleave.
+>   - *Single ledger column with rejection as a compensating credit.*
+>     Rejected: conflates reservation and committed deduction; harder
+>     to reason about during reconciliation.
+> - **Impact:** Balance entity decomposes into `hcmBalance` + pending
+>   overlays + approved overlays. Request state machine defines explicit
+>   hold-creation and hold-release transitions on create / reject /
+>   cancel. Every balance-consistency test must cover the overlay.
+
+---
+
+> **2026-04-24 — Approval commits locally; HCM push via outbox**
+> - **Decision:** manager approval commits locally in a single
+>   transaction; the HCM push is durable-async via an outbox table
+>   polled by an in-process worker with bounded backoff. Each request
+>   carries `hcmSyncStatus: pending | synced | failed`.
+> - **Reason:** §13 explicitly names HCM unavailability and timeout as
+>   scenarios to handle; synchronous coupling would block approvals
+>   during HCM downtime, which is unacceptable for a manager workflow.
+>   §8.3 (defense) and §8.4 (partial failure) point to decoupling:
+>   local truth + async reconciliation is the standard defensive
+>   pattern. The outbox is one table + one worker — not a queue broker
+>   — and stays well below §10's infrastructure threshold.
+> - **Alternatives considered:**
+>   - *Synchronous call inside the approval transaction.* Rejected: a
+>     30-second HCM timeout becomes 30 seconds of user-facing latency;
+>     rollback of approval on HCM failure loses the domain event the
+>     manager already made.
+>   - *Fire-and-forget with no persistence.* Rejected: violates §8.4
+>     (reprocessing, partial failure) — state is lost on crash.
+> - **Impact:** adds an `hcm_outbox` table, a push worker module, and a
+>   `hcmSyncStatus` column on requests. Touches approval use case, HCM
+>   client, and tests for HCM-down / timeout / retry-after-crash.
+
+---
+
+> **2026-04-24 — Batch sync preserves local holds; conflicts halt approvals**
+> - **Decision:** the HCM batch sets the raw balance authoritatively
+>   per `(employeeId, locationId, leaveType)`. Local pending holds and
+>   approved-not-yet-pushed deductions are **preserved as overlays**
+>   on top of the new HCM value. If the new HCM value would make
+>   `hcmBalance − approvedNotYetPushed` negative, the affected
+>   dimension is flagged as an `inconsistency` event and further
+>   approvals on that dimension are halted until resolved.
+> - **Reason:** CHALLENGE.md names HCM as source of truth, so the raw
+>   value must win on reads (§8.5). §8.3 prohibits blind trust; a pure
+>   "HCM overwrites everything" policy would erase a just-approved-
+>   not-yet-pushed manager decision. §8.4 requires preventing
+>   compounding divergence, which halting on the affected dimension
+>   accomplishes. §12's error taxonomy treats *detected inconsistency*
+>   as its own category.
+> - **Alternatives considered:**
+>   - *HCM always wins; wipe and replay local state.* Rejected: an
+>     in-flight approved push would be silently lost.
+>   - *Local always wins; HCM advisory.* Rejected: contradicts the
+>     brief's *"Source of Truth"* framing.
+>   - *Last-write-wins by timestamp.* Rejected: requires trustworthy
+>     clocks on both sides and silently loses data either way.
+> - **Impact:** touches the batch ingestion use case, balance
+>   projection logic, an `inconsistencies` table/endpoint, and tests
+>   covering batch-during-pending, batch-during-approval-push, and
+>   batch-reducing-below-approved.
+
+---
+
+> **2026-04-24 — Dual idempotency: client UUID on request, service UUID on outbox**
+> - **Decision:** two distinct idempotency scopes.
+>   - `clientRequestId` (UUID) is required on `POST /requests` and
+>     deduplicates *request creation*. A duplicate POST returns the
+>     same entity rather than creating two.
+>   - `hcmIdempotencyKey` (UUID) is generated per HCM mutation intent,
+>     stored on the outbox row, and sent as the `Idempotency-Key`
+>     header. Retries of the same push reuse the key; a reversal is a
+>     different intent with a different key.
+> - **Reason:** §8.4 names reprocessing and duplication as first-class
+>   concerns; §8.5 favors explicit per-intent keys for traceability.
+>   The two scopes address different problems — request creation vs
+>   HCM push — and conflating them would hide retry bugs. The outbox
+>   row, indexed by the service UUID, is the local source of dedup
+>   truth even if HCM ignores the header.
+> - **Alternatives considered:**
+>   - *`(employeeId, locationId, startDate, endDate)` tuple as the
+>     idempotency key.* Rejected: conflates intent with state; a
+>     reversal of the same tuple is a different intent.
+>   - *HCM-returned id.* Rejected: unusable for the first call (no id
+>     yet) and assumes HCM returns stable ids.
+>   - *A single key serving both scopes.* Rejected: client-facing and
+>     server-internal dedup are different problems; merging hides
+>     failures.
+> - **Impact:** `requests.client_request_id` (unique); `hcm_outbox.
+>   idempotency_key`; HCM client injects the header; outbox worker is
+>   safe under duplicate attempts.
+
+---
+
+> **2026-04-24 — Balance dimension includes leaveType (default PTO)**
+> - **Decision:** balance is keyed by
+>   `(employeeId, locationId, leaveType)` with `leaveType` as an
+>   enumerated field. Initial single value: `PTO`. The brief's
+>   *"per-employee per-location"* statement is read as defining the
+>   *grain* of a balance record, not prohibiting other attributes.
+> - **Reason:** the brief names vacation/sick as plausible distinctions
+>   (*"10 days of leave"*) and uses *"with necessary dimensions"* for
+>   the batch payload, signaling the dimension set is not frozen.
+>   §8.7 (non-invention) is honored because the evidence is in the
+>   brief; §8.1 (scope) is honored because no further dimension is
+>   added beyond type. Adding the column later would migrate every
+>   balance query — regret cost later is larger than marginal cost now.
+> - **Alternatives considered:**
+>   - *Employee + location only.* Rejected: real HCMs universally
+>     separate leave categories; later addition would migrate every
+>     balance query and every request DTO.
+>   - *Full policy model with accrual windows.* Rejected outright under
+>     §10 and §8.7 — no evidence this is needed.
+> - **Impact:** balance primary key; all balance repository methods;
+>   batch ingestion mapping; request DTO must specify type; balance
+>   invariant tests. If the real HCM has no type distinction, the
+>   column collapses to a single value with zero behavioral impact.
+
+---
+
+> **2026-04-24 — Mock HCM is a standalone Express app under scripts/hcm-mock/**
+> - **Decision:** the mock HCM is a small Express (or Fastify) app
+>   under `scripts/hcm-mock/`, started as a separate process during
+>   integration and e2e test suites. It exposes a state-reset endpoint
+>   and scenario-injection endpoints (force 500, force timeout, set
+>   balance, set inconsistency). Integration and e2e tests talk to it
+>   over real HTTP; unit tests may use in-process doubles for speed.
+> - **Reason:** the brief explicitly favors *"real mock servers with
+>   some basic logic to simulate balance changes"* (CHALLENGE.md). An
+>   in-process double shortcuts the retry loop, timeout handling, and
+>   serialization — exactly the code paths §13 names as critical. A
+>   mock has no DI / module / guard need; §8.2 and §10 favor the
+>   minimum ceremony that delivers the needed fidelity.
+> - **Alternatives considered:**
+>   - *In-process NestJS test module bound to a real port.* Rejected:
+>     defeats what the brief explicitly favors and hides HTTP client
+>     behavior.
+>   - *Sibling NestJS app in a monorepo.* Rejected: Nest bootstrapping
+>     cost with no DI / module benefit for a mock.
+> - **Impact:** adds `scripts/hcm-mock/`; global Jest setup starts and
+>   resets it once per suite; the HCM client contract is documented
+>   against this mock. If the real HCM diverges, the mock is the first
+>   thing updated.
+
+---
+
+> **2026-04-24 — Cancellation is a distinct terminal state from rejection**
+> - **Decision:** employee-initiated cancellation of a `pending`
+>   request transitions to a `cancelled` terminal state, distinct from
+>   the manager-initiated `rejected` terminal state. Cancellation
+>   releases the pending hold atomically in the same transaction that
+>   flips the status. The request state machine is a four-state DAG:
+>   `pending → approved | rejected | cancelled`.
+> - **Reason:** cancellation and rejection are driven by different
+>   actors (Employee vs Manager) and carry different audit semantics;
+>   collapsing them would lose information. §8.4 requires atomic
+>   release of the held balance to prevent stale reservations on
+>   abandoned requests. The architect subagent surfaced this concern
+>   during the open-questions analysis even though it was not in the
+>   original §10.
+> - **Alternatives considered:**
+>   - *Single `terminated` state parameterized by an initiator field.*
+>     Rejected: weakens compile-time guarantees by replacing a type
+>     check with a string comparison in every downstream check.
+>   - *No cancellation — employee waits for rejection.* Rejected:
+>     indefinitely holds balance on abandoned requests; poor UX and
+>     poor hygiene.
+> - **Impact:** request state machine adds `cancelled` terminal state;
+>   cancellation use case; balance-release test. Affects every
+>   state-transition test.
+
 ## 10. Open questions
 
-Ambiguities surfaced by reading the challenge brief against
-`INSTRUCTIONS.md`. Each must be resolved (or explicitly deferred with a
-recorded assumption) before the corresponding design section freezes.
+### Resolved (see §9 decision log)
+
+The six questions surfaced during session 2 are all closed by the
+2026-04-24 decision entries in §9. Kept here as pointers so the
+trajectory from *question* to *decision* remains navigable:
 
 1. **Balance reservation timing — creation vs approval.**
-   Is the balance decremented (or reserved) when the Employee submits
-   the request (`pending`), or only when the Manager approves? Both are
-   defensible; the choice reshapes concurrency semantics, duplicate
-   detection, and what "cancel a pending request" means.
-
+   → §9 *Reserve balance at creation as pending hold*.
 2. **Approval-to-HCM propagation.**
-   When the Manager approves, does this service call the HCM
-   immediately (and hold the approval transactionally pending HCM's
-   response), or does approval commit locally and a separate job pushes
-   to the HCM asynchronously? Affects perceived latency, failure
-   handling, and idempotency guarantees.
-
+   → §9 *Approval commits locally; HCM push via outbox*.
 3. **Batch sync conflict resolution.**
-   When the HCM batch delivers a balance that contradicts a locally
-   pending reservation or an approved-but-not-yet-pushed request, what
-   wins? Silent HCM overwrite, flag-as-inconsistency-for-manager,
-   or reconcile by re-applying local pending operations?
-
+   → §9 *Batch sync preserves local holds; conflicts halt approvals*.
 4. **Idempotency identifier for HCM calls.**
-   What makes a realtime HCM call safely retryable? Client-supplied
-   request UUID, `(employeeId, locationId, startDate, endDate)` tuple,
-   or the HCM's own returned id? Must be defined before the HCM client
-   module lands.
-
+   → §9 *Dual idempotency: client UUID on request, service UUID on outbox*.
 5. **Dimensions beyond `(employeeId, locationId)`.**
-   The brief says "with necessary dimensions" for the batch payload.
-   Beyond employee and location, do we need a leave type
-   (vacation / sick / personal), accrual period, or other axis? This
-   stays open until the mock HCM's schema is specified.
-
+   → §9 *Balance dimension includes leaveType (default PTO)*.
 6. **Mock HCM shape — real server vs in-process double.**
-   The brief favors "real mock servers with some basic logic to
-   simulate balance changes". Options: standalone Nest app in the
-   monorepo, Express mini-service under `scripts/hcm-mock/`, or an
-   in-process NestJS test module bound to a real HTTP port via
-   `supertest`. Decision affects test runtime, CI complexity, and
-   fidelity to production HCM behavior.
+   → §9 *Mock HCM is a standalone Express app under scripts/hcm-mock/*.
+
+### Still open
+
+1. **Clock / timezone authority for `startDate` and `endDate`.**
+   Leave requests are date-bounded. If the HCM operates in a different
+   timezone than this service, a same-day request can land on
+   different business dates across systems, creating subtle
+   day-boundary divergences. Unresolved because the real HCM's
+   timezone behavior is unknown. Likely mitigation: represent request
+   dates as `YYYY-MM-DD` (no time component), document the assumed
+   timezone in §3, and surface mismatches via the inconsistency
+   mechanism established in §9. Final decision deferred to the
+   scaffolding round when the mock's timezone behavior is modeled.

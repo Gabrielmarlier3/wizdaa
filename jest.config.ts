@@ -1,12 +1,26 @@
 import type { Config } from 'jest';
 
-const config: Config = {
+const shared = {
   moduleFileExtensions: ['js', 'json', 'ts'],
+  transform: { '^.+\\.(t|j)s$': 'ts-jest' },
+  testEnvironment: 'node',
+  moduleNameMapper: { '^@/(.*)$': '<rootDir>/src/$1' },
+};
+
+const config: Config = {
   rootDir: '.',
-  testRegex: '.*\\.spec\\.ts$',
-  transform: {
-    '^.+\\.(t|j)s$': 'ts-jest',
-  },
+  projects: [
+    {
+      displayName: 'unit',
+      testMatch: ['<rootDir>/src/**/*.spec.ts'],
+      ...shared,
+    },
+    {
+      displayName: 'integration',
+      testMatch: ['<rootDir>/test/integration/**/*.spec.ts'],
+      ...shared,
+    },
+  ],
   collectCoverageFrom: [
     'src/**/*.(t|j)s',
     '!src/**/*.module.ts',
@@ -14,10 +28,6 @@ const config: Config = {
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'text-summary', 'lcov', 'html'],
-  testEnvironment: 'node',
-  moduleNameMapper: {
-    '^@/(.*)$': '<rootDir>/src/$1',
-  },
 };
 
 export default config;

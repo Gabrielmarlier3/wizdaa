@@ -11,6 +11,8 @@ const config: Config = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
+  globalSetup: '<rootDir>/test/e2e/globalSetup.ts',
+  globalTeardown: '<rootDir>/test/e2e/globalTeardown.ts',
 };
 
 export default config;

@@ -162,6 +162,38 @@ describe('POST /requests/:id/approve', () => {
     expect(outboxRow?.lastError).toMatch(/409/);
   });
 
+  it('treats a 2xx with malformed body as a retryable transient failure', async () => {
+    seedBalance('emp-badshape', 'loc-BR', 'PTO', 10);
+    const pending = await createPendingRequest({
+      employeeId: 'emp-badshape',
+      clientRequestId: 'client-badshape-01',
+    });
+    await setScenario('forceBadShape');
+
+    const response = await request(ctx.app.getHttpServer())
+      .post(`/requests/${pending.id}/approve`)
+      .send();
+
+    // R5 path: HCM accepts with an unparseable body; never mark
+    // synced. Local approval stands; the outbox stays retryable so
+    // a later attempt against a fixed HCM can succeed.
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      id: pending.id,
+      status: 'approved',
+      hcmSyncStatus: 'pending',
+    });
+
+    const outboxRow = ctx.db
+      .select()
+      .from(hcmOutbox)
+      .where(eq(hcmOutbox.requestId, pending.id))
+      .get();
+    expect(outboxRow?.status).toBe('failed_retryable');
+    expect(outboxRow?.lastError).toMatch(/malformed/i);
+    expect(outboxRow?.attempts).toBe(1);
+  });
+
   it('serialises concurrent approvals so one wins and the other returns INVALID_TRANSITION', async () => {
     seedBalance('emp-concurrent', 'loc-BR', 'PTO', 10);
     const pending = await createPendingRequest({

@@ -1,5 +1,5 @@
 import { Db } from '../database/connection';
-import { HcmOutboxRepository } from '../time-off/repositories/hcm-outbox.repository';
+import { HcmOutboxRepository } from './repositories/hcm-outbox.repository';
 import { RequestsRepository } from '../time-off/repositories/requests.repository';
 import { HcmClient, HcmMutationResult } from './hcm.client';
 import { HcmOutboxDueRow, HcmOutboxWorker } from './hcm-outbox-worker';

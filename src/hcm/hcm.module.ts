@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { HcmClient, HCM_BASE_URL, HCM_TIMEOUT_MS } from './hcm.client';
+import { HcmOutboxRepository } from './repositories/hcm-outbox.repository';
 
 @Module({
   providers: [
@@ -15,7 +16,8 @@ import { HcmClient, HCM_BASE_URL, HCM_TIMEOUT_MS } from './hcm.client';
       useFactory: (): number => Number(process.env.HCM_TIMEOUT_MS ?? 2000),
     },
     HcmClient,
+    HcmOutboxRepository,
   ],
-  exports: [HcmClient],
+  exports: [HcmClient, HcmOutboxRepository],
 })
 export class HcmModule {}

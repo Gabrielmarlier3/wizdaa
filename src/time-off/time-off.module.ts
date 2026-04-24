@@ -8,18 +8,19 @@ import { GetRequestUseCase } from './get-request.use-case';
 import { RejectRequestUseCase } from './reject-request.use-case';
 import { ApprovedDeductionsRepository } from './repositories/approved-deductions.repository';
 import { BalancesRepository } from './repositories/balances.repository';
-import { HcmOutboxRepository } from './repositories/hcm-outbox.repository';
 import { HoldsRepository } from './repositories/holds.repository';
 import { RequestsRepository } from './repositories/requests.repository';
 import { TimeOffController } from './time-off.controller';
 
 /**
- * HcmOutboxWorker lives under src/hcm/ for code-organisation — it is
- * an HCM-integration concern alongside HcmClient and the mock. It is
- * registered here in TimeOffModule (not HcmModule) to avoid a
- * circular import: the worker depends on HcmOutboxRepository and
- * RequestsRepository (both time-off) and on HcmClient (which
- * TimeOffModule already imports via HcmModule).
+ * `HcmOutboxWorker` is declared in `src/hcm/` alongside the client
+ * and mock — its concern is HCM integration. Provider registration
+ * lives here in TimeOffModule, not HcmModule, because the worker
+ * also needs `RequestsRepository` (to flip `requests.hcmSyncStatus`
+ * after a push outcome). Moving that repo to HcmModule would
+ * misplace a core time-off domain concern; having HcmModule import
+ * TimeOffModule would create a cycle since TimeOffModule already
+ * imports HcmModule for `HcmClient` and `HcmOutboxRepository`.
  */
 @Module({
   imports: [HcmModule],
@@ -34,7 +35,6 @@ import { TimeOffController } from './time-off.controller';
     HoldsRepository,
     BalancesRepository,
     ApprovedDeductionsRepository,
-    HcmOutboxRepository,
     HcmOutboxWorker,
   ],
   // Exported so BalanceModule (and any future read-side module) can

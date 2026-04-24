@@ -17,7 +17,7 @@ import {
 import { RequestNotFoundError } from './errors';
 import { ApprovedDeductionsRepository } from './repositories/approved-deductions.repository';
 import { BalancesRepository } from './repositories/balances.repository';
-import { HcmOutboxRepository } from './repositories/hcm-outbox.repository';
+import { HcmOutboxRepository } from '../hcm/repositories/hcm-outbox.repository';
 import { HoldsRepository } from './repositories/holds.repository';
 import { RequestsRepository } from './repositories/requests.repository';
 

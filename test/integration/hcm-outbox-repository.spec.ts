@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { hcmOutbox, requests } from '../../src/database/schema';
-import { HcmOutboxRepository } from '../../src/time-off/repositories/hcm-outbox.repository';
+import { HcmOutboxRepository } from '../../src/hcm/repositories/hcm-outbox.repository';
 import { buildTestApp, TestContext } from '../helpers/test-app';
 
 /**

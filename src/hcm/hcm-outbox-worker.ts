@@ -7,14 +7,14 @@ import {
 } from '@nestjs/common';
 import { DATABASE } from '../database/database.module';
 import { Db } from '../database/connection';
+import { RequestsRepository } from '../time-off/repositories/requests.repository';
+import { HcmClient, HcmMutationResult } from './hcm.client';
 import {
   HcmOutboxDueRow,
   HcmOutboxRepository,
-} from '../time-off/repositories/hcm-outbox.repository';
-import { RequestsRepository } from '../time-off/repositories/requests.repository';
-import { HcmClient, HcmMutationResult } from './hcm.client';
+} from './repositories/hcm-outbox.repository';
 
-export { HcmOutboxDueRow } from '../time-off/repositories/hcm-outbox.repository';
+export { HcmOutboxDueRow } from './repositories/hcm-outbox.repository';
 
 /**
  * After 5 attempts fail with transient outcomes, the row is promoted

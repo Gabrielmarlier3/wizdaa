@@ -321,14 +321,27 @@ honoured the header. The resolution write is guarded by
 `WHERE status != 'synced'` so a slow inline push completing after
 a worker tick cannot overwrite the terminal state.
 
-**Batch (HCM → this service).** The `POST /hcm/balances/batch`
-endpoint is deferred. Its semantics (full-corpus replacement,
-idempotent replay, conflict detection against in-flight approved-
-not-yet-pushed rows) are pinned in §3.3 and §3.5. When implemented,
-the batch intake's conflict-halting behaviour hooks into the approve
-use case as an extra precondition: a dimension flagged
-`inconsistency` blocks approval until resolved (§9 *Batch sync
-preserves local holds; conflicts halt approvals*).
+**Batch (HCM → this service).** `POST /hcm/balances/batch` accepts
+a full-corpus snapshot `{ generatedAt, balances: [...] }`.
+Processing happens in a single transaction:
+`BalancesRepository.upsertBatch` replaces every incoming row, then
+`deleteNotInSet` removes rows whose composite key was absent from
+the snapshot (stranded pending requests on removed dimensions
+surface as `INVALID_DIMENSION` on next approve — see open Q11).
+Per dimension, the §3.5 predicate
+`newHcmBalance − approvedNotYetPushed < 0` decides whether to
+`upsert` into `inconsistencies` (halt flag) or `deleteByDimension`
+(auto-clear). The endpoint returns
+`{ replaced, inconsistenciesDetected }`. `generatedAt` is
+validated for shape and ignored — no persistence, no ordering
+semantics until a real HCM asks for it.
+
+The approve use case's inconsistency hook (step 3 of
+`commitApproval`) reads the flag by composite PK and raises
+`DimensionInconsistentError → 409 DIMENSION_INCONSISTENT` before
+the balance re-check. A flagged dimension stays halted until the
+next clean batch auto-clears it (§9 decision 14; no manual-resolve
+endpoint).
 
 **Failure-mode testing.** The standalone mock HCM exposes a
 `POST /test/scenario` endpoint with modes
@@ -338,11 +351,52 @@ E2E specs flip scenarios to drive each outbox branch deterministically
 
 ## 6. Concurrency & consistency strategy
 
-> TBD: the approve slice's concurrency fences (guarded UPDATE,
-> UNIQUE outbox request_id) are documented inline in §9 decisions and
-> tested at e2e; the section is written when a second concurrency-
-> sensitive flow (reject / cancel, batch intake) lands and a unified
-> view earns the space.
+The service runs as a single Node.js process and persists through
+a single `better-sqlite3` connection, which serialises writes at
+the driver level. All concurrency arguments below rely on that
+serialisation — there is no multi-process/multi-writer variant.
+
+**Write-lifecycle fences.** The approve/reject/cancel transitions
+use `UPDATE requests SET status=? WHERE id=? AND status='pending'`
+as the primary fence and read zero-rows-changed as the signal
+that another writer committed first. A secondary fence on
+`UNIQUE(hcm_outbox.request_id)` catches the rare case where the
+primary fence races at the SQL layer (plan 005 Appendix A R1).
+
+**Outbox resolution.** The worker's resolution write and a late
+inline push completing on the same outbox row both guard with
+`WHERE status NOT IN ('synced', 'failed_permanent')` so a late
+writer cannot downgrade a terminal state (plan 009 reviewer R5
+extended in plan 009 Phase B).
+
+**Batch intake vs approve, same dimension.** Two orderings,
+neither loses data:
+
+- *Batch commits first.* The approve tx reads the new
+  `balances.hcmBalance` and the (unchanged)
+  `approvedNotYetPushedDays` sum. If a halt row was written it
+  raises `DIMENSION_INCONSISTENT`; otherwise the balance re-check
+  decides between `INSUFFICIENT_BALANCE` and success on the new
+  numbers.
+- *Approve commits first.* The approve landed under the old HCM
+  balance. The subsequent batch reads the higher
+  `approvedNotYetPushedDays` (the just-approved row is now
+  counted) and evaluates the predicate against the incoming
+  `newHcmBalance`. If the conflict exists post-hoc, the batch
+  writes the halt and future approvals on that dimension are
+  blocked until the next clean batch.
+
+In both orderings the conflict either blocks the in-flight
+approve or surfaces post-hoc as a halt — the overlay projection
+is never left under-counting silently.
+
+**Batch intake vs outbox worker.** The worker touches `hcm_outbox`
+and `requests.hcm_sync_status`; the batch touches `balances` and
+`inconsistencies`. No shared tables, no conflict. A worker that
+synced a push for a dimension the batch later flags is safe: the
+`approvedDeductions` sum for that dimension drops (outbox is now
+`synced` → excluded from the predicate), which can only make the
+conflict predicate *less* likely to fire, never more.
 
 ## 7. Error taxonomy
 
@@ -359,6 +413,7 @@ is backed by an e2e or integration spec in the current tree.
 | `INSUFFICIENT_BALANCE`  | 409    | Create check or approve re-check fails against the overlay projection.                                 | —                   |
 | `INVALID_TRANSITION`    | 409    | Approve / reject / cancel targets a request whose status is not the expected source state.             | `currentStatus`     |
 | `BALANCE_NOT_FOUND`     | 404    | GET /balance finds no `balances` row for the queried dimension.                                        | —                   |
+| `DIMENSION_INCONSISTENT`| 409    | Approve targets a dimension flagged inconsistent by the most recent HCM batch.                         | `employeeId`, `locationId`, `leaveType` |
 | (HCM permanent)         | —      | HCM returns 4xx; surfaced in the response body's `hcmSyncStatus = 'failed'`, not as an HTTP error.     | —                   |
 | (HCM transient)         | —      | HCM 5xx / timeout / bad shape; surfaced as `hcmSyncStatus = 'pending'`, outbox `failed_retryable`.     | —                   |
 
@@ -856,6 +911,67 @@ Entry template:
 >   *Outbox* paragraph rewritten to match the now-implemented
 >   worker.
 
+---
+
+> **2026-04-24 — HCM batch intake replaces full corpus; inconsistencies auto-clear on next clean batch**
+> - **Decision:** `POST /hcm/balances/batch` accepts a full-corpus
+>   snapshot and replaces the local `balances` table in one
+>   transaction (upsert everything in, delete everything out). A
+>   new `inconsistencies` table carries a current-state halt flag
+>   per `(employeeId, locationId, leaveType)`; a row is written
+>   when the §3.5 predicate
+>   `newHcmBalance − approvedNotYetPushed < 0` fires for a
+>   dimension in the incoming batch, and deleted unconditionally
+>   otherwise (auto-clear). `ApproveRequestUseCase.commitApproval`
+>   reads the flag before the balance re-check and raises
+>   `DimensionInconsistentError → 409 DIMENSION_INCONSISTENT` when
+>   present.
+> - **Reason:** TRD §3.3 specifies the full-corpus contract; §3.5
+>   commits the service to halting approvals on the affected
+>   dimension until resolved. A current-state flag table with
+>   auto-clear is the minimum shape that satisfies both: the flag
+>   is the resolution lever, and "resolved" is what HCM signals by
+>   sending a clean batch. A manual-resolve endpoint
+>   (`POST /inconsistencies/:dimension/resolve`) would duplicate
+>   the signal HCM already sends and add read-surface columns
+>   (`resolvedBy`, `resolvedAt`) that §10 (no speculative
+>   abstraction) tells us to defer until an operator workflow
+>   concretely needs them. Pending holds are intentionally excluded
+>   from the predicate per the literal §3.5 reading
+>   `hcmBalance − approvedNotYetPushed` — holds self-heal on
+>   reject/cancel, so including them would false-positive whenever
+>   many pendings are open.
+> - **Alternatives considered:**
+>   - *Manual-resolve only (operator must acknowledge).* Rejected
+>     in the plan 010 scope-picking question: the TRD treats HCM as
+>     source of truth, and a batch that no longer triggers the
+>     predicate IS the authoritative "resolved" signal. Forcing a
+>     human acknowledgement every time HCM itself corrects the
+>     balance is friction without a safety gain at this scope.
+>   - *Include pending holds in the predicate
+>     (`hcmBalance − pending − approvedNotYetPushed < 0`).*
+>     Rejected: the §3.5 text names the narrower predicate, and
+>     pending requests that fail to convert to approvals release
+>     their holds on their own terminal transition.
+>   - *Per-dimension transactions instead of one tx.* Rejected:
+>     leaves the `balances` table in a hybrid state under failure,
+>     which is harder to reason about than "atomic-or-nothing
+>     retry" at SQLite's batch scale.
+>   - *Blocking create-time as well as approve-time.* Rejected:
+>     pending holds on a flagged dimension are harmless — nothing
+>     commits until approval, and pending requests on stranded
+>     dimensions surface correctly at their own approve attempt.
+> - **Impact:** adds migration `0002_previous_polaris.sql` with the
+>   `inconsistencies` table; `InconsistenciesRepository` under
+>   `src/hcm/repositories/`; `BalancesRepository` gains
+>   `upsertBatch` + `deleteNotInSet`; new `HcmIngressModule`
+>   hosting `BatchBalanceIntakeUseCase` and `HcmIngressController`
+>   — a distinct third module to avoid a HcmModule ↔ TimeOffModule
+>   cycle; new error `DimensionInconsistentError` in
+>   `src/time-off/errors.ts`; `ApproveRequestUseCase` gains an
+>   `InconsistenciesRepository` dependency and a new step-3 guard
+>   in `commitApproval`; §7 adds `DIMENSION_INCONSISTENT` (409).
+
 ## 10. Open questions
 
 ### Closed (pointers into §9)
@@ -879,18 +995,29 @@ navigable.
    → §9 *HCM and this service operate in UTC*.
 8. **Outbox worker topology.**
    → §9 *Outbox worker polls every 5s with exponential backoff*.
+9. **`inconsistency`-flagged dimension interaction with pending approvals.**
+   → §9 *HCM batch intake replaces full corpus; inconsistencies auto-clear on next clean batch*.
 
 ### Surfaced during the approve slice (plan 005)
 
-9. **`inconsistency`-flagged dimension interaction with pending
-   approvals.** §9 *Batch sync preserves local holds; conflicts
-   halt approvals* describes a dimension-level halt that the
-   approve use case must respect. The hook has not been written
-   because the batch intake slice is deferred; when it lands the
-   approve use case gains a precondition check before the balance
-   re-check, against a not-yet-designed `inconsistencies` table.
 10. **Inline push timeout budget.** 2s default (`HCM_TIMEOUT_MS`
     env override). Assumption, not load-tested. Too-short loses
     legitimate slow responses; too-long worsens approval-latency
     P95. Revisit when a real HCM contract or concrete timings
     surface.
+
+### Surfaced during the batch intake slice (plan 010)
+
+11. **Stranded pending requests on deleted dimensions.** The
+    batch intake's full-corpus replacement deletes any `balances`
+    row whose composite key is absent from the incoming snapshot
+    (TRD §3.3). If a pending request + its hold exist for a
+    deleted dimension, the hold remains (it FKs to `requests`,
+    not `balances`), and the next approve attempt correctly
+    surfaces `INVALID_DIMENSION` because no balance row exists.
+    But the request itself stays `pending` indefinitely until
+    manually rejected or cancelled — there is no operator tooling
+    to surface or sweep such rows today. Defer to a dedicated
+    operator-tooling slice once a real workflow materialises;
+    §8.7 (no invention) says wait for the concrete need before
+    designing the cleanup.

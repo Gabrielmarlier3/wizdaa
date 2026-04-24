@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TimeOffModule } from '../time-off/time-off.module';
 import { BatchBalanceIntakeUseCase } from './batch-balance-intake.use-case';
 import { HcmModule } from './hcm.module';
+import { HcmIngressController } from './hcm-ingress.controller';
 
 /**
  * Dedicated module for HCM → service ingress flows (currently
@@ -18,6 +19,7 @@ import { HcmModule } from './hcm.module';
  */
 @Module({
   imports: [HcmModule, TimeOffModule],
+  controllers: [HcmIngressController],
   providers: [BatchBalanceIntakeUseCase],
   exports: [BatchBalanceIntakeUseCase],
 })

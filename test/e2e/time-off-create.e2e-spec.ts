@@ -1,21 +1,40 @@
-import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { buildTestApp } from '../helpers/test-app';
+import { balances } from '../../src/database/schema';
+import { buildTestApp, TestContext } from '../helpers/test-app';
 
 describe('POST /requests', () => {
-  let app: INestApplication;
+  let ctx: TestContext;
 
   beforeEach(async () => {
-    app = await buildTestApp();
+    ctx = await buildTestApp();
   });
 
   afterEach(async () => {
-    await app.close();
+    await ctx.close();
   });
 
+  function seedBalance(
+    employeeId: string,
+    locationId: string,
+    leaveType: string,
+    hcmBalance: number,
+  ): void {
+    ctx.db
+      .insert(balances)
+      .values({
+        employeeId,
+        locationId,
+        leaveType,
+        hcmBalance,
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
+  }
+
   it('creates a pending request with a balance hold when balance is sufficient', async () => {
-    // Given a valid create-request payload.
-    const response = await request(app.getHttpServer())
+    seedBalance('emp-001', 'loc-BR', 'PTO', 10);
+
+    const response = await request(ctx.app.getHttpServer())
       .post('/requests')
       .send({
         employeeId: 'emp-001',
@@ -27,7 +46,6 @@ describe('POST /requests', () => {
         clientRequestId: 'req-uuid-001',
       });
 
-    // Expect the service to accept it and return the new pending request.
     expect(response.status).toBe(201);
     expect(response.body).toMatchObject({
       id: expect.any(String),

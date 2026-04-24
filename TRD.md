@@ -198,19 +198,174 @@ thing to update if the real HCM diverges.
 
 ## 4. Data model
 
-> TBD: entities, state machines, invariants.
+Five tables. The balance projection is derived (TRD §3.4); local
+overlays live in their own ledger tables rather than destructive
+updates to `balances`.
+
+```
+ ┌───────────────────────────────────────────┐
+ │ balances   (hcm_balance, updated_at)      │
+ │   PK (employee_id, location_id,           │
+ │       leave_type)                         │
+ │   — mirrors the authoritative HCM value   │
+ └───────────────────────────────────────────┘
+                     ▲
+                     │ projection reads
+ ┌───────────────────┴───────────────────────┐
+ │ requests   (status, hcm_sync_status, ...) │
+ │   status:   pending | approved |          │
+ │             rejected | cancelled          │
+ │   hcm_sync_status:                        │
+ │             not_required | pending |      │
+ │             synced | failed               │
+ └───────────────────────────────────────────┘
+          ▲                         ▲
+          │ 1 per pending           │ 1 per approved
+          │                         │
+ ┌────────┴─────────┐   ┌───────────┴──────────────┐
+ │ holds            │   │ approved_deductions       │
+ │ days, request_id │   │ days, request_id          │
+ │ UNIQUE(req_id)   │   │ UNIQUE(req_id)            │
+ │ — pending res.   │   │ — overlay durable until   │
+ │                  │   │   HCM acknowledges the    │
+ │                  │   │   push (joins outbox)     │
+ └──────────────────┘   └───────────────────────────┘
+                                     │
+                                     │ 1 per approved
+                                     ▼
+                        ┌────────────────────────────┐
+                        │ hcm_outbox                 │
+                        │ status: pending | synced | │
+                        │   failed_retryable |       │
+                        │   failed_permanent         │
+                        │ idempotency_key (UNIQUE)   │
+                        │ request_id (UNIQUE)        │
+                        │ attempts, next_attempt_at, │
+                        │ last_error, hcm_mutation_id│
+                        └────────────────────────────┘
+```
+
+**Request state machine.** Four-state DAG, strictly one transition
+away from `pending`:
+`pending → approved | rejected | cancelled`. Non-`pending` states are
+terminal for this service's lifecycle (see §9 *Cancellation is a
+distinct terminal state from rejection*). Two status-guarded UPDATEs
+act as concurrency fences: `WHERE status='pending'` on approve
+(implemented — see §9 *Approval commits locally; HCM push via
+outbox*); the equivalent on reject / cancel lands with those slices.
+
+**Ledger overlay story.** The balance visible to the Employee is
+`hcmBalance − pendingHolds − approvedNotYetPushedDeductions`. Holds
+are deleted on any terminal transition (a hold never outlives its
+request). Approved deductions are durable after approval; the
+projection filters them via a join on `hcm_outbox.status IN
+('pending', 'failed_retryable')` so a synced push naturally drops
+out of the sum without requiring a cleanup job.
+
+**Primary keys and constraints.**
+- `balances`: composite PK `(employee_id, location_id, leave_type)`.
+  The grain stated in §9 *Balance dimension includes leaveType*.
+- `requests.id`, `holds.id`, `approved_deductions.id`, `hcm_outbox.id`
+  are service-generated UUIDs.
+- `requests.client_request_id` UNIQUE — §9 *Dual idempotency*, client
+  scope.
+- `holds.request_id`, `approved_deductions.request_id`,
+  `hcm_outbox.request_id` all UNIQUE with `ON DELETE CASCADE` to
+  `requests` — cascade is a test-teardown convenience; the
+  application never deletes request rows in production.
+- `hcm_outbox.idempotency_key` UNIQUE — §9 *Dual idempotency*,
+  service scope.
+- `hcm_outbox` composite index on `(status, next_attempt_at)` for a
+  future worker's polling query.
+
+**Timestamps.** Every `created_at` / `updated_at` / `next_attempt_at`
+/ `synced_at` is stored as a text ISO-8601 string in UTC, per §9
+*HCM and this service operate in UTC*.
 
 ## 5. HCM integration strategy
 
-> TBD: realtime, batch, idempotency, failure handling.
+Realised in the approve slice; extended in future slices as batch
+intake and rejection land.
+
+**Realtime (this service → HCM).** All mutations flow through the
+single `HcmClient` module. The client wraps `fetch` with:
+
+- A bounded timeout (default 2s, `HCM_TIMEOUT_MS` env override).
+  Assumption, not load-tested.
+- The `Idempotency-Key` header carrying a service-generated UUID
+  unique to the *mutation intent* (§9 *Dual idempotency*, service
+  scope). Retries — whether from the approve call's inline push or
+  the deferred outbox worker — reuse the same key.
+- A discriminated-union return type that folds every HTTP and
+  transport outcome into three outbox branches:
+  - `ok` → outbox `synced`, request `hcm_sync_status = 'synced'`.
+  - `permanent` (4xx) → outbox `failed_permanent`,
+    `hcm_sync_status = 'failed'`. Local approval stands (§8.3).
+  - `transient` (5xx, network error, timeout, malformed 2xx body) →
+    outbox `failed_retryable`, attempts incremented,
+    `next_attempt_at` set, `hcm_sync_status` stays `'pending'`.
+
+**Outbox.** One row per request for the request's lifetime
+(`UNIQUE(request_id)`). Inserted atomically with the approval
+transition; resolved by the post-commit inline push, or by a future
+out-of-process worker retrying `failed_retryable` rows by
+`next_attempt_at`. The row is the authoritative dedup source — a
+worker consulting `status = 'synced'` avoids re-issuing a request
+that HCM has already acknowledged regardless of whether HCM itself
+honoured the header.
+
+**Batch (HCM → this service).** The `POST /hcm/balances/batch`
+endpoint is deferred. Its semantics (full-corpus replacement,
+idempotent replay, conflict detection against in-flight approved-
+not-yet-pushed rows) are pinned in §3.3 and §3.5. When implemented,
+the batch intake's conflict-halting behaviour hooks into the approve
+use case as an extra precondition: a dimension flagged
+`inconsistency` blocks approval until resolved (§9 *Batch sync
+preserves local holds; conflicts halt approvals*).
+
+**Failure-mode testing.** The standalone mock HCM exposes a
+`POST /test/scenario` endpoint with modes
+`normal | force500 | forceTimeout | forcePermanent | forceBadShape`.
+E2E specs flip scenarios to drive each outbox branch deterministically
+(see `test/e2e/time-off-approve.e2e-spec.ts`).
 
 ## 6. Concurrency & consistency strategy
 
-> TBD: transactions, locking, reprocessing.
+> TBD: the approve slice's concurrency fences (guarded UPDATE,
+> UNIQUE outbox request_id) are documented inline in §9 decisions and
+> tested at e2e; the section is written when a second concurrency-
+> sensitive flow (reject / cancel, batch intake) lands and a unified
+> view earns the space.
 
 ## 7. Error taxonomy
 
-> TBD: validation, business, external, conflict, inconsistency.
+The service maps every failure into a stable error envelope
+`{ code: string, message: string, ...extras }` returned in the HTTP
+response body, alongside a deliberate status code. Every code below
+is backed by an e2e or integration spec in the current tree.
+
+| Code                    | Status | When                                                                                                   | Extras              |
+|-------------------------|--------|--------------------------------------------------------------------------------------------------------|---------------------|
+| (validation, no code)   | 400    | `class-validator` rejects a DTO at the global `ValidationPipe`. Body is Nest's default validation one. | —                   |
+| `REQUEST_NOT_FOUND`     | 404    | Approve (or a future GET / reject / cancel) receives an id that does not exist.                        | —                   |
+| `INVALID_DIMENSION`     | 422    | Create or approve finds no `balances` row for `(employee, location, leaveType)`.                       | —                   |
+| `INSUFFICIENT_BALANCE`  | 409    | Create check or approve re-check fails against the overlay projection.                                 | —                   |
+| `INVALID_TRANSITION`    | 409    | Approve (or a future reject / cancel) targets a request whose status is not the expected source state. | `currentStatus`     |
+| (HCM permanent)         | —      | HCM returns 4xx; surfaced in the response body's `hcmSyncStatus = 'failed'`, not as an HTTP error.     | —                   |
+| (HCM transient)         | —      | HCM 5xx / timeout / bad shape; surfaced as `hcmSyncStatus = 'pending'`, outbox `failed_retryable`.     | —                   |
+
+**Design note.** HCM-side outcomes are not HTTP errors — the local
+approval commits regardless (§8.3). The client inspects
+`hcmSyncStatus` in the response body to learn the push state. This
+keeps the two concerns orthogonal: HTTP status reports what the
+service decided about the request; the body's `hcmSyncStatus`
+reports what the service learned about HCM.
+
+**`INVALID_TRANSITION` envelope extras.** Unlike the other 409, the
+`INVALID_TRANSITION` body carries `currentStatus` so a client
+retrying after a network timeout can reconcile (R4 in plan 005
+Appendix A). This is the precedent for any future 409 that wants to
+inform an idempotent retry of the current state.
 
 ## 8. Testing strategy
 
@@ -568,11 +723,47 @@ Entry template:
 >   and e2e tests build their DB from the same migration runner used
 >   at startup.
 
+---
+
+> **2026-04-24 — Approved deductions as a separate ledger table**
+> - **Decision:** the approved-not-yet-pushed overlay lives in its
+>   own `approved_deductions` table (UNIQUE `request_id`,
+>   FK → `requests.id`), not as a typed row on `holds`. The balance
+>   projection sums it by joining `hcm_outbox` and filtering on
+>   `status IN ('pending', 'failed_retryable')` so synced pushes
+>   drop out of the overlay without requiring a cleanup pass.
+> - **Reason:** holds and approved deductions have different
+>   lifecycles (holds are deleted on any terminal transition;
+>   deductions persist through the full push cycle) and different
+>   projection conditions (pending-sum excludes the currently-
+>   approving request; approved-sum conditions on outbox state).
+>   Fusing them via a `type` column in `holds` would force every
+>   query into a conditional and smear two clear concepts into one
+>   fuzzy one. §8.2 simplicity favours the split; §14 (persistence
+>   integrity) favours coherent constraints that can be asserted at
+>   the schema level rather than in query predicates.
+> - **Alternatives considered:**
+>   - *`holds` with a `type` flag (`pending | approved`).* Rejected:
+>     conditional queries everywhere; weaker type safety on
+>     lifecycle invariants.
+>   - *No approved-deductions table; derive via
+>     `requests ⨝ hcm_outbox.status`.* Derivable, but recomputing
+>     two-joined sums on every projection read is wasteful, and
+>     §14's "coherent constraints" guidance favours explicit overlay
+>     tables that the schema can constrain by itself.
+> - **Impact:** adds `ApprovedDeductionsRepository` with `insert`
+>   and `sumNotYetPushedDaysForDimension`. Balance projection in
+>   `ApproveRequestUseCase` reads the sum; create-request slice's
+>   placeholder `approvedNotYetPushedDays = 0` is replaced with the
+>   real query in both the approve use case and — when the next
+>   slice lands — the create use case.
+
 ## 10. Open questions
 
-All questions surfaced so far are closed; pointers into the §9
-decision entries are kept here so the trajectory from *question* to
-*decision* stays navigable.
+### Closed (pointers into §9)
+
+Kept here so the trajectory from *question* to *decision* stays
+navigable.
 
 1. **Balance reservation timing — creation vs approval.**
    → §9 *Reserve balance at creation as pending hold*.
@@ -588,3 +779,25 @@ decision entries are kept here so the trajectory from *question* to
    → §9 *Mock HCM is a standalone Express app under scripts/hcm-mock/*.
 7. **Clock / timezone authority for `startDate` and `endDate`.**
    → §9 *HCM and this service operate in UTC*.
+
+### Surfaced during the approve slice (plan 005)
+
+8. **Outbox worker topology.** Slice 2 runs inline-only — one push
+   attempt after the local commit, no background retry. A
+   `failed_retryable` outbox row therefore sits until the next
+   manual action. The architect brief recommends a startup sweep
+   plus an optional periodic worker as the natural next increment;
+   §8.2 says wait until a real failure scenario justifies the
+   periodic path. Unresolved; revisit in the next slice.
+9. **`inconsistency`-flagged dimension interaction with pending
+   approvals.** §9 *Batch sync preserves local holds; conflicts
+   halt approvals* describes a dimension-level halt that the
+   approve use case must respect. The hook has not been written
+   because the batch intake slice is deferred; when it lands the
+   approve use case gains a precondition check before the balance
+   re-check, against a not-yet-designed `inconsistencies` table.
+10. **Inline push timeout budget.** 2s default (`HCM_TIMEOUT_MS`
+    env override). Assumption, not load-tested. Too-short loses
+    legitimate slow responses; too-long worsens approval-latency
+    P95. Revisit when a real HCM contract or concrete timings
+    surface.

@@ -109,6 +109,129 @@ exists as a third module (instead of just folding into HcmModule) is
 captured in the plan 010 archive under
 [`docs/plans/010-batch-intake-and-inconsistency-halt.md`](./docs/plans/010-batch-intake-and-inconsistency-halt.md).
 
+## API reference
+
+Every endpoint is covered by an e2e spec under `test/e2e/`. Error
+codes are defined in [TRD.md](./TRD.md) §7; the envelope is
+`{ code: string, message: string, ...extras }` unless stated
+otherwise.
+
+### `POST /requests` — create a pending request
+
+```http
+POST /requests
+Content-Type: application/json
+
+{
+  "employeeId": "emp-1",
+  "locationId": "loc-BR",
+  "leaveType": "PTO",
+  "startDate": "2026-05-01",
+  "endDate": "2026-05-02",
+  "days": 2,
+  "clientRequestId": "b9d4c1fa-..."   // client UUID for idempotency
+}
+```
+
+`201 Created` with the full `TimeOffRequest` entity (id, status =
+`"pending"`, `hcmSyncStatus = "not_required"`, createdAt, …).
+
+Errors: `400` validation (Nest default envelope), `409
+INSUFFICIENT_BALANCE` (overlay projection says no), `422
+INVALID_DIMENSION` (no `balances` row for the triple). An idempotent
+replay with the same `clientRequestId` returns the same entity rather
+than creating a duplicate (TRD §9 *Dual idempotency*).
+
+### `GET /requests/:id` — read one request
+
+`200 OK` with the full `TimeOffRequest` entity.
+Errors: `404 REQUEST_NOT_FOUND`, `400` on a non-UUID path param.
+
+### `POST /requests/:id/approve` — pending → approved
+
+No request body. `200 OK` with the updated `TimeOffRequest` whose
+`hcmSyncStatus` reflects the inline HCM push outcome
+(`"synced"` on happy path, `"pending"` if the push was transient
+and the outbox worker will retry, `"failed"` if HCM returned 4xx).
+
+Errors: `404 REQUEST_NOT_FOUND`, `409 INVALID_TRANSITION` (with
+`currentStatus` extra so clients can reconcile), `409
+INSUFFICIENT_BALANCE`, `422 INVALID_DIMENSION`, `409
+DIMENSION_INCONSISTENT` (with `employeeId` / `locationId` /
+`leaveType` extras when the dimension was halted by a batch — see
+§9 decision 14).
+
+### `POST /requests/:id/reject` — pending → rejected
+
+No body. `200 OK`. Errors: `404 REQUEST_NOT_FOUND`, `409
+INVALID_TRANSITION`. Releases the pending hold atomically in the
+same transaction.
+
+### `POST /requests/:id/cancel` — pending → cancelled
+
+Same shape as reject. Distinct terminal state (§9 *Cancellation is
+a distinct terminal state from rejection*).
+
+### `GET /balance` — overlay breakdown
+
+```
+GET /balance?employeeId=emp-1&locationId=loc-BR&leaveType=PTO
+```
+
+`200 OK`:
+
+```json
+{
+  "employeeId": "emp-1",
+  "locationId": "loc-BR",
+  "leaveType": "PTO",
+  "hcmBalance": 10,
+  "pendingDays": 2,
+  "approvedNotYetPushedDays": 3,
+  "availableDays": 5
+}
+```
+
+All four numeric fields are always present so a client can
+reconcile a `POST /requests` 409 in one round-trip (§9 decision
+12). Errors: `404 BALANCE_NOT_FOUND`, `400` validation.
+
+### `POST /hcm/balances/batch` — full-corpus balance replacement (HCM → service)
+
+```http
+POST /hcm/balances/batch
+Content-Type: application/json
+
+{
+  "generatedAt": "2026-04-24T12:00:00.000Z",
+  "balances": [
+    { "employeeId": "emp-1", "locationId": "loc-BR", "leaveType": "PTO", "balance": 10 },
+    { "employeeId": "emp-2", "locationId": "loc-BR", "leaveType": "PTO", "balance": 20 }
+  ]
+}
+```
+
+`201 Created` with `{ "replaced": <N>, "inconsistenciesDetected":
+<M> }`. The payload replaces the local `balances` table for every
+incoming dimension and deletes rows whose triple is absent from
+the incoming set (full-corpus semantics, TRD §3.3). Dimensions
+where `newBalance − approvedNotYetPushed < 0` are flagged in the
+`inconsistencies` table and block subsequent approvals until a
+later clean batch auto-clears the flag (§9 decision 14).
+
+Errors: `400` validation (empty `balances`, missing `generatedAt`,
+negative `balance`). `generatedAt` is validated ISO-8601 but
+**not persisted** — see TRD §3.3.
+
+### Note on `hcmSyncStatus`
+
+HCM outcomes are surfaced in the response **body** as
+`hcmSyncStatus` rather than translated into HTTP error codes. A
+local approval commits regardless of the HCM push result (defence
+rule, TRD §8.3); the four values `not_required | pending | synced
+| failed` tell the client what happened on the outbound push. See
+[TRD.md](./TRD.md) §7 "Design note" for the full rationale.
+
 ## Testing
 
 The test pyramid is declared in [TRD.md](./TRD.md) §8. Summary:

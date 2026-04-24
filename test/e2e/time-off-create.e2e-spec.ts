@@ -88,4 +88,29 @@ describe('POST /requests', () => {
     const allHolds = ctx.db.select().from(holds).all();
     expect(allHolds).toHaveLength(1);
   });
+
+  it('rejects with 409 Conflict when balance is insufficient', async () => {
+    seedBalance('emp-003', 'loc-BR', 'PTO', 1);
+
+    const response = await request(ctx.app.getHttpServer())
+      .post('/requests')
+      .send({
+        employeeId: 'emp-003',
+        locationId: 'loc-BR',
+        leaveType: 'PTO',
+        startDate: '2026-05-01',
+        endDate: '2026-05-03',
+        days: 3,
+        clientRequestId: 'req-uuid-over',
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      code: 'INSUFFICIENT_BALANCE',
+      message: expect.any(String),
+    });
+
+    const allHolds = ctx.db.select().from(holds).all();
+    expect(allHolds).toHaveLength(0);
+  });
 });

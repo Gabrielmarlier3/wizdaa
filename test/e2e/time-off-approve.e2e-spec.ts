@@ -1,5 +1,10 @@
 import request from 'supertest';
-import { balances, hcmOutbox } from '../../src/database/schema';
+import {
+  approvedDeductions,
+  balances,
+  hcmOutbox,
+  holds,
+} from '../../src/database/schema';
 import { eq } from 'drizzle-orm';
 import { buildTestApp, TestContext } from '../helpers/test-app';
 
@@ -155,5 +160,58 @@ describe('POST /requests/:id/approve', () => {
       .get();
     expect(outboxRow?.status).toBe('failed_permanent');
     expect(outboxRow?.lastError).toMatch(/409/);
+  });
+
+  it('serialises concurrent approvals so one wins and the other returns INVALID_TRANSITION', async () => {
+    seedBalance('emp-concurrent', 'loc-BR', 'PTO', 10);
+    const pending = await createPendingRequest({
+      employeeId: 'emp-concurrent',
+      clientRequestId: 'client-concurrent-01',
+    });
+
+    // Two parallel approvals. better-sqlite3 serialises them at the
+    // driver level; the use case's UPDATE ... WHERE status='pending'
+    // guard is what decides the winner deterministically.
+    const [first, second] = await Promise.all([
+      request(ctx.app.getHttpServer())
+        .post(`/requests/${pending.id}/approve`)
+        .send(),
+      request(ctx.app.getHttpServer())
+        .post(`/requests/${pending.id}/approve`)
+        .send(),
+    ]);
+
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual([200, 409]);
+
+    const loser = first.status === 409 ? first : second;
+    expect(loser.body).toMatchObject({
+      code: 'INVALID_TRANSITION',
+      currentStatus: 'approved',
+    });
+
+    // Exactly one of each ledger line — the primary fence prevented
+    // the double-approve and the secondary UNIQUE(hcm_outbox.request_id)
+    // would have caught it otherwise.
+    const deds = ctx.db
+      .select()
+      .from(approvedDeductions)
+      .where(eq(approvedDeductions.requestId, pending.id))
+      .all();
+    expect(deds).toHaveLength(1);
+
+    const outboxRows = ctx.db
+      .select()
+      .from(hcmOutbox)
+      .where(eq(hcmOutbox.requestId, pending.id))
+      .all();
+    expect(outboxRows).toHaveLength(1);
+
+    const holdRows = ctx.db
+      .select()
+      .from(holds)
+      .where(eq(holds.requestId, pending.id))
+      .all();
+    expect(holdRows).toHaveLength(0);
   });
 });

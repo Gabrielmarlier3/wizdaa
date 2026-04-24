@@ -337,3 +337,117 @@ batch).
 Commits: `de79c59`, `4320a6f`, `1815309`, `38fcfcc`, `893f57b`,
 `ecf157e`, `39bf508` (Phase A); `1b9e783` (Phase B). Plan archive:
 `docs/plans/008-read-endpoints.md`.
+
+## 2026-04-24 — Session 10: outbox worker
+
+Plan 009 executed end-to-end. Closes TRD §10 open question 8 (the
+outbox worker topology gap) by landing the in-process polling
+worker that drains `hcm_outbox` rows left `failed_retryable` by a
+transient HCM failure. Until this slice, the overlay projection
+would under-count `availableDays` indefinitely for any request
+whose inline push had hit a 5xx or malformed 2xx — the approve
+use case scheduled a retry 30s out, but nothing ever picked it up.
+
+**Phase A (8 commits, architect-briefed).** The architect (sonnet)
+output a full first-principles brief: worker topology (in-process
+over out-of-process), retry policy (exponential 30s base × 2, max
+5 attempts, proposed 30-min cap), R5 race between late inline
+push and worker tick (guard `WHERE status != 'synced'`), payload
+read from stored `payloadJson` and idempotency key from the row
+(never freshly generated), NODE_ENV-guarded auto-start so tests
+drive `tick()` manually.
+
+Mid-execution deviations from the original plan:
+
+- **30-minute backoff cap dropped.** With `MAX_ATTEMPTS=5` and a
+  30s base, the largest scheduled delay is 240s (`2^3 × 30s`) —
+  the fifth failure exhausts immediately and never schedules. A
+  30-min cap is unreachable code; INSTRUCTIONS.md §10 says don't
+  write it until the constraint appears. The §9 decision entry
+  explicitly records "no cap needed" with the arithmetic.
+- **Worker file at `src/hcm/`, provider in `TimeOffModule`.** The
+  worker needs `HcmClient` (HcmModule), `HcmOutboxRepository`
+  (HcmModule after Phase B), and `RequestsRepository` (TimeOffModule).
+  HcmModule importing TimeOffModule would create a cycle since
+  TimeOffModule already imports HcmModule. The provider stays in
+  TimeOffModule so the graph is acyclic.
+- **Integration spec became e2e.** The mock HCM is started only by
+  `test/jest-e2e.config.ts`'s `globalSetup`. Adding a second
+  globalSetup to the unit+integration config would duplicate the
+  mock lifecycle for no gain — putting the worker's mock-driven
+  spec in `test/e2e/` is simpler.
+- **`maxWorkers: 1` on the e2e config.** The mock HCM's scenario
+  state is a module-level singleton shared across Jest workers.
+  The approve specs had been latently racy for two slices; the
+  outbox worker's aggressive scenario flipping pushed it past the
+  breaking point. Serialising e2e at the worker level is the
+  cheapest correct fix; per-worker mock instances would need port
+  allocation and lifecycle rework for no real gain.
+
+**Phase B (reviewer, 3 commits).** Reviewer (sonnet) verdict:
+*ship with fixes*. Four should-fix:
+
+1. **Terminal-state guard asymmetry.** The R5 mitigation only
+   protected `synced` from overwrites; `failed_permanent` was
+   equally terminal but unguarded. A late inline push landing
+   `permanent` concurrent with a worker landing `transient` on
+   the same row would have walked the permanent terminal
+   backward. Applied: both `markFailedRetryable` and
+   `markFailedPermanent` now use `status NOT IN ('synced',
+   'failed_permanent')`, with two new integration specs covering
+   `failed_permanent` alongside the two existing `synced` cases.
+2. **Module boundary hidden coupling.** `HcmOutboxRepository`
+   registered in TimeOffModule despite being an HCM-integration
+   concern. Applied: file moved to `src/hcm/repositories/`,
+   provider registered in `HcmModule`, `ApproveRequestUseCase`
+   and `HcmOutboxWorker` imports updated. Pure rewiring; no
+   behavioural delta.
+3. **`JSON.parse(payloadJson)` unguarded.** A corrupted payload
+   would throw synchronously out of `processRow`, propagate past
+   the for-loop, and starve every row behind it in the batch.
+   Applied: try/catch promotes the poison row to `failed_permanent`
+   with a parse-error reason and continues. A new unit spec pairs
+   a poison row with a healthy one and asserts the healthy row
+   still gets pushed.
+4. **`NODE_ENV === 'test'` fragility.** Reviewer suggested an
+   explicit constructor argument or injected config. *Deferred.*
+   Jest sets `NODE_ENV=test` by default per its own docs, so the
+   guard is robust against the Jest lifecycle; the failure mode
+   reviewer flagged (non-standard `NODE_ENV` in a deployed
+   container) is observable quickly — every approval would stay
+   `hcmSyncStatus='pending'` forever. The ceremony cost of DI
+   wiring for a single boolean outweighs the gain under §8.2
+   (simplicity) and §10 (no speculative abstraction).
+
+Plus one small nit applied alongside the should-fix commits: the
+comment on the backoff schedule was rephrased to track
+`row.attempts ∈ {0,1,2,3}` explicitly (resolves ambiguity between
+"attempts scheduled" and "attempts stored"). The `void`-return
+stylistic nit was not applied (reviewer explicitly flagged it as
+take-it-or-leave-it, and the current form is consistent with how
+`ApproveRequestUseCase.resolveSyncStatus` writes the same
+transaction pattern).
+
+**Phase C (wrap).** This entry + plan 009 archive.
+
+56 unit/integration + 34 e2e (90 total) green. TRD: 10 sections,
+13 decision entries (+1: outbox worker), §10 Q8 moved to Closed.
+§5 outbox paragraph rewritten from "future out-of-process worker"
+to the now-implemented in-process cadence + retry policy. No
+theater-language audit regressions.
+
+The loop from approve to synced HCM mutation is now closed: inline
+push handles the happy path and the first transient attempt;
+worker takes over if the inline attempt failed, and promotes to
+`failed_permanent` after 5 total attempts. Balance projection is
+no longer stranded by a single transient outage.
+
+Remaining slices named in TRD §10: HCM batch intake (large, Q9's
+inconsistency-halt hook depends on it), inline push timeout budget
+(Q10, wait for real timings), and — if we ever want it — removing
+the inline push in favor of worker-only (UX tradeoff, separate
+decision).
+
+Commits: `d442d50`, `8b61644`, `2d7cbe1`, `28c7f6c`, `e8d9c22`,
+`7517bbd`, `a94ee9f`, `35efe20` (Phase A); `81071a1`, `1fc6b0d`,
+`dc4a942` (Phase B). Plan archive: `docs/plans/009-outbox-worker.md`.

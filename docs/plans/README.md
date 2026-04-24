@@ -55,6 +55,20 @@ each step of the project. Alongside the TRD (decisions) and the code
   overlay breakdown, not a single available number). One reviewer
   should-fix applied inline. Appendix A preserves the architect
   brief.
+- `009-outbox-worker.md` — the HCM outbox worker slice: an
+  in-process `HcmOutboxWorker` polling `hcm_outbox` every 5s with
+  exponential backoff (30s × 2^attempts, max 5 attempts) that
+  drains rows left `failed_retryable` by transient HCM failures.
+  Closes TRD §10 Q8. Records decision 13. Three reviewer
+  should-fix applied in Phase B (symmetric terminal-state guards
+  covering `failed_permanent`, `HcmOutboxRepository` moved from
+  TimeOffModule to HcmModule, `JSON.parse` poison-payload
+  isolation); one should-fix deferred (`NODE_ENV=test` auto-start
+  guard — keeping the simpler form, see devlog). Deviations from
+  the plan body (dropped 30-min cap, integration spec relocated
+  to e2e, `maxWorkers: 1` on e2e config) captured in the
+  session-10 devlog entry. Appendix A preserves the architect
+  brief.
 
 ## Relationship to `TRD.md`
 

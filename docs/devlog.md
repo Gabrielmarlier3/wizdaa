@@ -70,3 +70,44 @@ practice).
 Commits (Phase A): `01942ea`, `7ad5d11`. Phase B (TRD contract + seven
 decision entries) and remaining Phase C follow. Plan archive:
 `docs/plans/003-open-questions-and-agentic-process.md`.
+
+## 2026-04-24 — Session 4: NestJS scaffolding and first TDD slice
+
+Executed plan 004 end-to-end:
+
+Phase A filled `TRD.md` §2 (architecture overview with ASCII
+diagram, four Nest modules, boundary rules) and §8 (test pyramid,
+coverage targets, mock HCM lifecycle, TDD ordering, critical
+scenarios). Phase B hand-crafted the NestJS project without the CLI
+hello-world: package.json, strict tsconfig (ES2022 for drizzle-kit
+compatibility), Jest with unit + e2e configs, Drizzle + better-sqlite3
+with a DatabaseModule and migration runner, and the mock HCM
+skeleton under `scripts/hcm-mock/`. Phase C took the `POST /requests`
+slice through a red-green-refactor loop:
+
+1. Failing e2e spec drove the entire slice.
+2. Schema + migration landed the three tables (`balances`, `requests`,
+   `holds`).
+3. Domain layer (pure functions: `createPendingRequest`, balance
+   projection) landed with 100% unit coverage.
+4. Repositories and `CreateRequestUseCase` wired the transactional
+   hold creation via `db.transaction(() => ...)` — synchronous by
+   construction per the Drizzle-over-better-sqlite3 decision.
+5. Controller + DTO + `TimeOffModule` made the e2e pass.
+6. Two more e2e tests covered idempotency (duplicate
+   `clientRequestId` returns the same request, no second hold) and
+   insufficient balance (→ 409 with `{code, message}` body).
+
+The plan reserved a final `refactor(domain)` commit for extracting
+balance projection to a pure function; this was already done during
+initial implementation, so the refactor commit was skipped rather
+than manufactured for show.
+
+TRD §9 gained the Drizzle ORM decision entry with TypeORM / Prisma /
+raw alternatives explicitly rejected.
+
+Commits (selected): `9fd9c71` (TRD §2/§8), `3040f8b`, `17cc746`,
+`140ccc0`, `d905f4f`, `bf90176`, `db32f7c` (Phase B), `fa54d05`,
+`3a566c8`, `0df2f4a`, `f5c7ad9`, `96d3ce1`, `d82a7ed`, `47c869b`
+(Phase C). Plan archive:
+`docs/plans/004-trd-completion-scaffolding-and-first-slice.md`.

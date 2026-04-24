@@ -17,7 +17,8 @@
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.config.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "ts-node --transpile-only src/database/migrate.ts"
+    "db:migrate": "ts-node --transpile-only src/database/migrate.ts",
+    "hcm-mock": "ts-node --transpile-only scripts/hcm-mock/server.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

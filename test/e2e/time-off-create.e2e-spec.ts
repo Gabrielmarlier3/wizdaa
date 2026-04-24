@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { balances } from '../../src/database/schema';
+import { balances, holds } from '../../src/database/schema';
 import { buildTestApp, TestContext } from '../helpers/test-app';
 
 describe('POST /requests', () => {
@@ -58,5 +58,34 @@ describe('POST /requests', () => {
       days: 2,
       clientRequestId: 'req-uuid-001',
     });
+  });
+
+  it('returns the existing request on a duplicate clientRequestId and does not create a second hold', async () => {
+    seedBalance('emp-002', 'loc-BR', 'PTO', 10);
+
+    const body = {
+      employeeId: 'emp-002',
+      locationId: 'loc-BR',
+      leaveType: 'PTO',
+      startDate: '2026-05-10',
+      endDate: '2026-05-11',
+      days: 2,
+      clientRequestId: 'req-uuid-dup',
+    };
+
+    const first = await request(ctx.app.getHttpServer())
+      .post('/requests')
+      .send(body);
+    const second = await request(ctx.app.getHttpServer())
+      .post('/requests')
+      .send(body);
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.body.id).toBe(first.body.id);
+    expect(second.body).toEqual(first.body);
+
+    const allHolds = ctx.db.select().from(holds).all();
+    expect(allHolds).toHaveLength(1);
   });
 });

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, lte, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, lte, notInArray, sql } from 'drizzle-orm';
 import { DATABASE } from '../../database/database.module';
 import { Db } from '../../database/connection';
 import { hcmOutbox, HcmOutboxStatus } from '../../database/schema';
@@ -102,12 +102,16 @@ export class HcmOutboxRepository {
   }
 
   /**
-   * Guarded against downgrading a `synced` row: if a slow inline
-   * push from the approve use case completes at roughly the same
-   * time a worker tick is resolving the same row, both may try to
-   * write. `synced` is terminal — the guard keeps the terminal
-   * value in place even if the second writer reached a transient
-   * outcome on a retry (plan 009 Appendix A R5).
+   * Both terminal states — `synced` and `failed_permanent` — are
+   * protected against being overwritten by a late second writer.
+   * Scenario: a slow inline push from the approve use case and a
+   * worker tick both resolve the same row concurrently; better-
+   * sqlite3 serialises the two transactions but the loser's write
+   * must not walk the winner's terminal outcome backward to a
+   * retryable or permanent state. Guarding both terminals keeps
+   * the invariant symmetric so future slices (removed inline push,
+   * second worker) do not introduce a regression (plan 009
+   * Appendix A R5 plus reviewer pass).
    */
   markFailedRetryable(
     id: string,
@@ -123,11 +127,16 @@ export class HcmOutboxRepository {
         nextAttemptAt,
         attempts: sql`${hcmOutbox.attempts} + 1`,
       })
-      .where(and(eq(hcmOutbox.id, id), ne(hcmOutbox.status, 'synced')))
+      .where(
+        and(
+          eq(hcmOutbox.id, id),
+          notInArray(hcmOutbox.status, ['synced', 'failed_permanent']),
+        ),
+      )
       .run();
   }
 
-  /** Same terminal-state guard as {@link markFailedRetryable}. */
+  /** Same terminal-state guards as {@link markFailedRetryable}. */
   markFailedPermanent(
     id: string,
     lastError: string,
@@ -136,7 +145,12 @@ export class HcmOutboxRepository {
     executor
       .update(hcmOutbox)
       .set({ status: 'failed_permanent', lastError })
-      .where(and(eq(hcmOutbox.id, id), ne(hcmOutbox.status, 'synced')))
+      .where(
+        and(
+          eq(hcmOutbox.id, id),
+          notInArray(hcmOutbox.status, ['synced', 'failed_permanent']),
+        ),
+      )
       .run();
   }
 }

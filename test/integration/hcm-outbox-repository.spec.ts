@@ -5,12 +5,13 @@ import { HcmOutboxRepository } from '../../src/hcm/repositories/hcm-outbox.repos
 import { buildTestApp, TestContext } from '../helpers/test-app';
 
 /**
- * Repo-level guard: once a row is `synced`, no subsequent mark*
- * method can move it to a non-terminal state. Covers the race
- * between a delayed inline push and a worker tick that both try
- * to resolve the same outbox row (plan 009 Appendix A R5).
+ * Repo-level guard: once a row is terminal (`synced` or
+ * `failed_permanent`), no subsequent mark* method can move it
+ * back to a non-terminal state. Covers the race between a
+ * delayed inline push and a worker tick that both try to
+ * resolve the same outbox row (plan 009 Appendix A R5).
  */
-describe('HcmOutboxRepository synced-row guards', () => {
+describe('HcmOutboxRepository terminal-state guards', () => {
   let ctx: TestContext;
   let repo: HcmOutboxRepository;
 
@@ -23,7 +24,12 @@ describe('HcmOutboxRepository synced-row guards', () => {
     await ctx.close();
   });
 
-  function seedSyncedOutboxRow(): { outboxId: string; requestId: string } {
+  type TerminalStatus = 'synced' | 'failed_permanent';
+
+  function seedTerminalOutboxRow(status: TerminalStatus): {
+    outboxId: string;
+    requestId: string;
+  } {
     const requestId = randomUUID();
     const outboxId = randomUUID();
     ctx.db
@@ -37,7 +43,7 @@ describe('HcmOutboxRepository synced-row guards', () => {
         endDate: '2026-05-02',
         days: 2,
         status: 'approved',
-        hcmSyncStatus: 'synced',
+        hcmSyncStatus: status === 'synced' ? 'synced' : 'failed',
         clientRequestId: `client-${requestId}`,
         createdAt: new Date().toISOString(),
       })
@@ -49,18 +55,19 @@ describe('HcmOutboxRepository synced-row guards', () => {
         requestId,
         idempotencyKey: randomUUID(),
         payloadJson: '{}',
-        status: 'synced',
+        status,
         attempts: 1,
         nextAttemptAt: new Date().toISOString(),
-        hcmMutationId: 'hcm-mut-seed',
-        syncedAt: new Date().toISOString(),
+        hcmMutationId: status === 'synced' ? 'hcm-mut-seed' : null,
+        syncedAt: status === 'synced' ? new Date().toISOString() : null,
+        lastError: status === 'failed_permanent' ? 'HCM 409 seeded' : null,
       })
       .run();
     return { outboxId, requestId };
   }
 
   it('leaves a synced row untouched when markFailedRetryable is called', () => {
-    const { outboxId } = seedSyncedOutboxRow();
+    const { outboxId } = seedTerminalOutboxRow('synced');
 
     repo.markFailedRetryable(
       outboxId,
@@ -80,7 +87,7 @@ describe('HcmOutboxRepository synced-row guards', () => {
   });
 
   it('leaves a synced row untouched when markFailedPermanent is called', () => {
-    const { outboxId } = seedSyncedOutboxRow();
+    const { outboxId } = seedTerminalOutboxRow('synced');
 
     repo.markFailedPermanent(outboxId, 'late writer race');
 
@@ -92,5 +99,38 @@ describe('HcmOutboxRepository synced-row guards', () => {
     expect(row?.status).toBe('synced');
     expect(row?.lastError).toBeNull();
     expect(row?.hcmMutationId).toBe('hcm-mut-seed');
+  });
+
+  it('leaves a failed_permanent row untouched when markFailedRetryable is called', () => {
+    const { outboxId } = seedTerminalOutboxRow('failed_permanent');
+
+    repo.markFailedRetryable(
+      outboxId,
+      'stale retry loser',
+      new Date(Date.now() + 30_000).toISOString(),
+    );
+
+    const row = ctx.db
+      .select()
+      .from(hcmOutbox)
+      .where(eq(hcmOutbox.id, outboxId))
+      .get();
+    expect(row?.status).toBe('failed_permanent');
+    expect(row?.attempts).toBe(1);
+    expect(row?.lastError).toBe('HCM 409 seeded');
+  });
+
+  it('leaves a failed_permanent row untouched when markFailedPermanent is called again', () => {
+    const { outboxId } = seedTerminalOutboxRow('failed_permanent');
+
+    repo.markFailedPermanent(outboxId, 'stale permanent loser');
+
+    const row = ctx.db
+      .select()
+      .from(hcmOutbox)
+      .where(eq(hcmOutbox.id, outboxId))
+      .get();
+    expect(row?.status).toBe('failed_permanent');
+    expect(row?.lastError).toBe('HCM 409 seeded');
   });
 });

@@ -5,6 +5,7 @@ import { DATABASE } from '../database/database.module';
 import { Db } from '../database/connection';
 import { createPendingRequest, TimeOffRequest } from '../domain/request';
 import { hasSufficientBalance } from '../domain/balance';
+import { ApprovedDeductionsRepository } from './repositories/approved-deductions.repository';
 import { BalancesRepository } from './repositories/balances.repository';
 import { HoldsRepository } from './repositories/holds.repository';
 import { RequestsRepository } from './repositories/requests.repository';
@@ -48,6 +49,7 @@ export class CreateRequestUseCase {
     private readonly requestsRepo: RequestsRepository,
     private readonly balancesRepo: BalancesRepository,
     private readonly holdsRepo: HoldsRepository,
+    private readonly approvedDeductionsRepo: ApprovedDeductionsRepository,
   ) {}
 
   execute(cmd: CreateRequestCommand): TimeOffRequest {
@@ -83,8 +85,19 @@ export class CreateRequestUseCase {
         cmd.leaveType,
         tx,
       );
-      // Approved-not-yet-pushed overlay lands with the approve slice.
-      const approvedNotYetPushedDays = 0;
+      // Already-approved deductions whose HCM push has not yet
+      // succeeded still consume the local view of the balance
+      // (TRD §3.4 overlay projection). Without this term the
+      // create-time check would let an employee file a request
+      // that the approve re-check is guaranteed to reject —
+      // false positive UX, and a §8.3 defence-rule slip.
+      const approvedNotYetPushedDays =
+        this.approvedDeductionsRepo.sumNotYetPushedDaysForDimension(
+          cmd.employeeId,
+          cmd.locationId,
+          cmd.leaveType,
+          tx,
+        );
 
       if (
         !hasSufficientBalance(

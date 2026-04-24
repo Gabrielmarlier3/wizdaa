@@ -30,26 +30,48 @@ scope its role (e.g. `domain-data` cites §7, §11, §14).
 ## The plan → execute → commit cycle
 
 1. **Plan.** Before any non-trivial change, plan mode is entered. The
-   plan file captures Context, Decisions, Files to modify, Verification,
-   and Out-of-scope. Ambiguities are resolved with `AskUserQuestion`
-   before plan approval, not guessed during execution.
-2. **Cross-review for architectural decisions.** When multiple valid
-   designs exist, the `architect` subagent is launched with a
-   deliberately bias-free prompt to produce an independent analysis —
-   often in parallel, in the background. Its output is synthesized
-   against the lead's own recommendations. Where the two disagree, the
-   stronger argument wins; the user is the tie-breaker. This cross-
-   validation is what separates *using* a subagent from *orchestrating*
-   one.
-3. **Execute.** Files are edited within the scope of the approved plan.
+   `architect` subagent is launched early in planning (bias-free
+   prompt, often in parallel, often on `opus`) to produce scope, flow,
+   risks, and ordered TDD steps. Its output is synthesised against
+   the lead's own thinking; the archived plan either inlines or
+   appendices the architect brief (plans without it are incomplete —
+   see *Plan template* below). Ambiguities are resolved with
+   `AskUserQuestion` before plan approval, not guessed during
+   execution.
+2. **Execute.** Files are edited within the scope of the approved plan.
+3. **Cross-review before push.** The `reviewer` subagent is launched
+   on the full local diff against `origin/main` before pushing. Its
+   findings are triaged as *blocking* / *should fix* / *nit* and
+   either resolved (as follow-up commits) or explicitly deferred in
+   `docs/devlog.md`. This step is what separates *using* a subagent
+   from *orchestrating* one; skipping it drops a load-bearing
+   checkpoint.
 4. **Commit.** Conventional Commits format
    (`type(scope): subject`). Every commit carries a
    `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`
    footer so authorship attribution is explicit.
 5. **Archive.** The approved plan is ported to
-   `docs/plans/NNN-<title>.md`, with supplementary analyses (e.g.
-   architect output) included as appendices so the evidence stays with
-   the decision.
+   `docs/plans/NNN-<title>.md` with the architect brief as Appendix
+   A. Any additional subagent analyses (reviewer findings summary,
+   domain-data or api-contract consultations) go in as further
+   appendices so the evidence stays with the decision.
+
+## Plan template
+
+Every plan archived in `docs/plans/NNN-*.md` must include:
+
+- **Context** — why the change is happening.
+- **Architect briefing** — the output of the architect subagent run
+  during planning, inlined or appended. Absent = plan incomplete.
+- **Decisions locked** — what is decided before execution starts, with
+  user ratifications where applicable.
+- **Phases** — each phase a commit-sized unit of work with its
+  commit message declared.
+- **Files touched** — inventory with NEW / MODIFIED markers.
+- **Verification** — how we will prove the plan succeeded, per phase.
+- **Out of scope** — explicit boundaries for the next plan.
+- **Pre-push checklist** — reviewer pass listed here; its completion
+  and findings logged in `docs/devlog.md`.
 
 ## Two slash commands
 

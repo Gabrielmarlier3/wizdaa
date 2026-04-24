@@ -100,6 +100,62 @@ describe('Mock HCM contract', () => {
     expect(idA).not.toBe(idB);
   });
 
+  it('replays a permanent 4xx outcome on retry with the same Idempotency-Key', async () => {
+    await fetch(`${process.env.HCM_MOCK_URL}/test/scenario`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'forcePermanent' }),
+    });
+
+    const body = {
+      employeeId: 'emp-perm',
+      locationId: 'loc-BR',
+      leaveType: 'PTO',
+      days: -1,
+      reason: 'TIME_OFF_APPROVED',
+      clientMutationId: 'client-perm-01',
+    };
+    const key = 'idempotency-key-perm-01';
+
+    const first = await fetch(
+      `${process.env.HCM_MOCK_URL}/balance/mutations`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': key,
+        },
+        body: JSON.stringify(body),
+      },
+    );
+    expect(first.status).toBe(409);
+    const firstBody = await first.json();
+
+    // Even after the scenario flips back to normal, the retry with
+    // the same Idempotency-Key must replay the stored 4xx outcome
+    // rather than minting a fresh success (TRD §3.2).
+    await fetch(`${process.env.HCM_MOCK_URL}/test/scenario`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'normal' }),
+    });
+
+    const second = await fetch(
+      `${process.env.HCM_MOCK_URL}/balance/mutations`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': key,
+        },
+        body: JSON.stringify(body),
+      },
+    );
+    expect(second.status).toBe(409);
+    const secondBody = await second.json();
+    expect(secondBody).toEqual(firstBody);
+  });
+
   it('rejects a POST /balance/mutations without an Idempotency-Key header', async () => {
     const res = await fetch(
       `${process.env.HCM_MOCK_URL}/balance/mutations`,

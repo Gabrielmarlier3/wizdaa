@@ -17,6 +17,11 @@ type Scenario =
   | 'forcePermanent'
   | 'forceBadShape';
 
+interface MutationOutcome {
+  status: number;
+  body: unknown;
+}
+
 interface MutationRecord {
   idempotencyKey: string;
   clientMutationId: string;
@@ -30,17 +35,19 @@ interface MutationRecord {
 
 interface MockState {
   scenario: Scenario;
-  // Idempotency-Key → mutation record. Retries with the same key
-  // return the same hcmMutationId (TRD §3.2 semantics).
-  mutationsByKey: Map<string, MutationRecord>;
-  // Ordered list of accepted mutations, for test inspection.
+  // Idempotency-Key → canonical outcome. Stored for any terminal
+  // response (2xx or 4xx) so retries replay exactly what the first
+  // call produced. 5xx / timeout are transient by definition and
+  // not stored — a retry is allowed to reach a different outcome.
+  outcomesByKey: Map<string, MutationOutcome>;
+  // Ordered list of accepted (2xx) mutations, for test inspection.
   mutationsLog: MutationRecord[];
 }
 
 function freshState(): MockState {
   return {
     scenario: 'normal',
-    mutationsByKey: new Map(),
+    outcomesByKey: new Map(),
     mutationsLog: [],
   };
 }
@@ -111,10 +118,13 @@ export function createMockHcmServer(): Express {
       clientMutationId?: string;
     };
 
-    // Idempotent replay: same key returns the prior response.
-    const prior = state.mutationsByKey.get(idempotencyKey);
+    // Idempotent replay: any terminal outcome (2xx or 4xx) stored
+    // under the key is replayed exactly. 5xx / timeout are transient
+    // by definition and not stored — a retry is allowed to reach a
+    // different scenario.
+    const prior = state.outcomesByKey.get(idempotencyKey);
     if (prior) {
-      res.status(200).json({ hcmMutationId: prior.hcmMutationId });
+      res.status(prior.status).json(prior.body);
       return;
     }
 
@@ -122,12 +132,18 @@ export function createMockHcmServer(): Express {
       case 'force500':
         res.status(500).json({ code: 'HCM_UNAVAILABLE' });
         return;
-      case 'forcePermanent':
-        res.status(409).json({
-          code: 'insufficient_balance',
-          message: 'HCM rejects this mutation permanently.',
-        });
+      case 'forcePermanent': {
+        const outcome: MutationOutcome = {
+          status: 409,
+          body: {
+            code: 'insufficient_balance',
+            message: 'HCM rejects this mutation permanently.',
+          },
+        };
+        state.outcomesByKey.set(idempotencyKey, outcome);
+        res.status(outcome.status).json(outcome.body);
         return;
+      }
       case 'forceTimeout':
         // Do not respond — let the client abort via its timeout.
         // Hold the request open longer than any reasonable test
@@ -135,9 +151,15 @@ export function createMockHcmServer(): Express {
         // the server.
         await new Promise((resolve) => setTimeout(resolve, 30_000));
         return;
-      case 'forceBadShape':
-        res.status(200).json({ nope: 'missing-hcmMutationId' });
+      case 'forceBadShape': {
+        const outcome: MutationOutcome = {
+          status: 200,
+          body: { nope: 'missing-hcmMutationId' },
+        };
+        state.outcomesByKey.set(idempotencyKey, outcome);
+        res.status(outcome.status).json(outcome.body);
         return;
+      }
       case 'normal':
       default:
         break;
@@ -167,7 +189,10 @@ export function createMockHcmServer(): Express {
       days: body.days,
       reason: body.reason ?? '',
     };
-    state.mutationsByKey.set(idempotencyKey, record);
+    state.outcomesByKey.set(idempotencyKey, {
+      status: 200,
+      body: { hcmMutationId: record.hcmMutationId },
+    });
     state.mutationsLog.push(record);
     res.status(200).json({ hcmMutationId: record.hcmMutationId });
   });

@@ -307,12 +307,19 @@ single `HcmClient` module. The client wraps `fetch` with:
 
 **Outbox.** One row per request for the request's lifetime
 (`UNIQUE(request_id)`). Inserted atomically with the approval
-transition; resolved by the post-commit inline push, or by a future
-out-of-process worker retrying `failed_retryable` rows by
-`next_attempt_at`. The row is the authoritative dedup source — a
-worker consulting `status = 'synced'` avoids re-issuing a request
+transition; resolved by the post-commit inline push on the happy
+path. A `failed_retryable` row is picked up by the in-process
+`HcmOutboxWorker`, which polls every 5s for rows whose
+`next_attempt_at <= now()` and re-sends the stored payload under
+the stored `idempotency_key`. Retries are scheduled on exponential
+backoff (30s × 2^attempts); after `MAX_ATTEMPTS = 5` the row is
+promoted to `failed_permanent` and `requests.hcmSyncStatus` flips
+to `'failed'`. The row is the authoritative dedup source — a
+worker consulting `status = 'synced'` skips re-issuing a request
 that HCM has already acknowledged regardless of whether HCM itself
-honoured the header.
+honoured the header. The resolution write is guarded by
+`WHERE status != 'synced'` so a slow inline push completing after
+a worker tick cannot overwrite the terminal state.
 
 **Batch (HCM → this service).** The `POST /hcm/balances/batch`
 endpoint is deferred. Its semantics (full-corpus replacement,
@@ -790,6 +797,65 @@ Entry template:
 >   `BALANCE_NOT_FOUND`) is the single error path when the dimension
 >   row is absent.
 
+---
+
+> **2026-04-24 — Outbox worker polls every 5s with exponential backoff, max 5 attempts**
+> - **Decision:** the `HcmOutboxWorker` runs in-process inside the
+>   same Node.js instance as the HTTP API. It polls `hcm_outbox`
+>   every 5 seconds for rows with `status IN ('pending',
+>   'failed_retryable')` and `next_attempt_at <= now()`, oldest-due
+>   first, in batches of up to 10. Each retry schedules the next
+>   attempt `30 × 2^attempts` seconds out (so 30s, 60s, 120s, 240s
+>   for attempts 1–4); after the fifth transient failure the row is
+>   promoted to `failed_permanent` and `requests.hcmSyncStatus`
+>   flips to `'failed'`. The interval auto-starts via `onModuleInit`
+>   unless `NODE_ENV === 'test'`, so tests drive `tick()` manually
+>   via `app.get(HcmOutboxWorker)`.
+> - **Reason:** §10 open question 8 tracked the gap — the inline
+>   push only attempts once, so a single transient HCM outage left
+>   `failed_retryable` rows stranded and the overlay projection
+>   permanently under-counting. A five-line `setInterval` wired in
+>   a Nest lifecycle hook closes the loop without adding a scheduler
+>   dependency (§10 *no infra without concrete need*). Exponential
+>   backoff was chosen over constant because a struggling HCM should
+>   not be pummeled on a tight cadence; five attempts is long enough
+>   (~7.5 min of scheduled delays plus each retry's own HCM call
+>   time) to survive a brief outage but short enough that operators
+>   see a real `'failed'` state before the overlay diverges for a
+>   full working day. No 30-minute cap was added — with
+>   `MAX_ATTEMPTS=5` and base 30s the largest scheduled delay is
+>   240s, so a cap is speculative code §10 says we should not write
+>   until the constraint actually appears.
+> - **Alternatives considered:**
+>   - *`@nestjs/schedule` / `@nestjs/cron`.* Rejected: adds a
+>     dependency for behaviour a plain `setInterval` delivers in
+>     five lines.
+>   - *Keeping the inline-only push and letting operators re-approve
+>     on failure.* Rejected: pushes an eventual-consistency concern
+>     into the user-facing workflow and breaks §8.4's reprocessing
+>     guarantee.
+>   - *Circuit breaker around `HcmClient`.* Rejected: no failure-rate
+>     data to justify the complexity; the bounded `MAX_ATTEMPTS` +
+>     permanent promotion is the stopping mechanism §10 already
+>     endorses.
+>   - *Removing the inline push and relying on the worker alone.*
+>     Rejected for this slice: removing the inline push would shift
+>     the approve response's observable `hcmSyncStatus` from
+>     immediate `'synced'` (happy path) to poll-interval-delayed
+>     `'synced'` — a user-visible UX change that deserves its own
+>     scoped decision, not a silent consequence of landing a retry
+>     loop.
+> - **Impact:** adds `HcmOutboxWorker` under `src/hcm/` and a
+>   `claimDueBatch(limit, now)` query on `HcmOutboxRepository`.
+>   `markFailedRetryable` and `markFailedPermanent` grow a
+>   `WHERE status != 'synced'` guard so a slow inline push
+>   completing after a worker tick cannot overwrite the terminal
+>   outcome. The e2e config serialises worker to `maxWorkers: 1`
+>   because the mock HCM's scenario state is now flipped more
+>   aggressively than parallel workers can safely share. TRD §5
+>   *Outbox* paragraph rewritten to match the now-implemented
+>   worker.
+
 ## 10. Open questions
 
 ### Closed (pointers into §9)
@@ -811,16 +877,11 @@ navigable.
    → §9 *Mock HCM is a standalone Express app under scripts/hcm-mock/*.
 7. **Clock / timezone authority for `startDate` and `endDate`.**
    → §9 *HCM and this service operate in UTC*.
+8. **Outbox worker topology.**
+   → §9 *Outbox worker polls every 5s with exponential backoff*.
 
 ### Surfaced during the approve slice (plan 005)
 
-8. **Outbox worker topology.** Slice 2 runs inline-only — one push
-   attempt after the local commit, no background retry. A
-   `failed_retryable` outbox row therefore sits until the next
-   manual action. The architect brief recommends a startup sweep
-   plus an optional periodic worker as the natural next increment;
-   §8.2 says wait until a real failure scenario justifies the
-   periodic path. Unresolved; revisit in the next slice.
 9. **`inconsistency`-flagged dimension interaction with pending
    approvals.** §9 *Batch sync preserves local holds; conflicts
    halt approvals* describes a dimension-level halt that the

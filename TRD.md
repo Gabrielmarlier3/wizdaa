@@ -2,7 +2,7 @@
 
 Living document. Updated alongside every architectural decision.
 Companion to `INSTRUCTIONS.md` (process rules). The original challenge
-brief is kept private under `notes/` (see §8 decision 2026-04-24); the
+brief is kept private under `notes/` (see §9 decision 2026-04-24); the
 context below is this service's public problem statement in our own
 words.
 
@@ -21,8 +21,8 @@ refreshes, direct HR edits.
   being valid at the moment of decision.
 
 **Balance scope.** Per-employee per-location. A given employee can have
-distinct balances across locations; dimensions beyond `employeeId` and
-`locationId` are not yet confirmed (see §9).
+distinct balances across locations; additional dimensions are
+addressed in §3 and §10.
 
 **HCM sync surfaces.**
 - **Realtime API** — query or mutate a single
@@ -47,27 +47,116 @@ would also reject.
 
 > TBD.
 
-## 3. Data model
+## 3. HCM contract (as assumed)
+
+The challenge brief intentionally leaves the HCM's interface open.
+This service is built against the following assumed contract, written
+as a testable specification. The standalone mock under
+`scripts/hcm-mock/` (see §9 *"Mock HCM is a standalone Express app"*)
+is the executable realization of these assumptions and is the first
+thing to update if the real HCM diverges.
+
+### 3.1 Transport
+
+- All endpoints are HTTP.
+- Realtime: this service calls the HCM.
+- Batch: the HCM **pushes** the full balance corpus to this service
+  (direction: HCM → us). Our endpoint accepts the push idempotently
+  since the batch may be replayed.
+
+### 3.2 Realtime API (this service → HCM)
+
+**Read the balance for a dimension.**
+
+- `GET /balance?employeeId=<id>&locationId=<id>&leaveType=<type>`
+- `200 OK` with
+  `{ employeeId, locationId, leaveType, balance }`.
+- `404 Not Found` for invalid dimension combinations.
+
+**Apply an approved balance mutation.**
+
+- `POST /balance/mutations`
+- Body:
+  `{ employeeId, locationId, leaveType, days, reason, clientMutationId }`.
+- Header: `Idempotency-Key: <uuid>`. The same key must be honored as a
+  replay; the response must be deterministic across retries.
+- `2xx` on success with an `hcmMutationId` for audit linkage.
+- `409 Conflict` on insufficient balance — our service also validates
+  locally, since HCM may fail to reject (§8.3).
+- `422 Unprocessable Entity` on invalid dimension combinations.
+- `5xx` and network timeouts are retryable with the same
+  `Idempotency-Key`.
+
+### 3.3 Batch push (HCM → this service)
+
+- `POST /hcm/balances/batch`
+- Body:
+  `{ generatedAt, balances: [{ employeeId, locationId, leaveType, balance }] }`.
+- Assumed to carry the full balance corpus on each call. Partial
+  batches would require separate signaling and are out of scope until
+  the real HCM indicates otherwise.
+- Idempotent: a replay of the same batch produces the same end state.
+
+### 3.4 Balance semantics
+
+- The HCM value is the authoritative raw balance per
+  `(employeeId, locationId, leaveType)`.
+- Local **pending reservations** and **approved-not-yet-pushed
+  deductions** are overlays on top of the HCM value — neither
+  modifies the HCM's reported figure.
+- Effective available balance visible to the Employee:
+  `hcmBalance − pendingReservations − approvedNotYetPushed`.
+
+### 3.5 Failure modes
+
+- **HCM unreachable / 5xx / slow.** The outbox retains the mutation;
+  the push worker retries with bounded backoff. Retries reuse the same
+  `Idempotency-Key`.
+- **Batch conflicts with local state.** If the new HCM value would
+  make `hcmBalance − approvedNotYetPushed` negative for a dimension,
+  the record is flagged as an `inconsistency` and further approvals on
+  that dimension are halted until manual resolution.
+- **HCM accepts what we would reject** (or vice versa). Our local
+  validation is authoritative. We never forward a mutation we believe
+  to be invalid (§8.3 defense rule).
+
+### 3.6 Authority boundaries
+
+- **HCM owns:** the raw balance value; the outcome of a mutation once
+  accepted.
+- **This service owns:** the request lifecycle (`pending`, `approved`,
+  `rejected`, `cancelled`), local pending reservations, the idempotent
+  outbox, and the mapping between local requests and HCM mutations.
+
+> **Interpretation note.** The brief states *"assume balances are
+> per-employee per-location"*. This service reads that statement as
+> defining the *grain* of a balance record, not prohibiting other
+> attributes. `leaveType` is added as a balance-record attribute
+> (default `PTO`) to keep the batch payload's *"necessary dimensions"*
+> hook extensible without speculation. See §9 decision *"Balance
+> dimension includes leaveType"*.
+
+## 4. Data model
 
 > TBD: entities, state machines, invariants.
 
-## 4. HCM integration strategy
+## 5. HCM integration strategy
 
 > TBD: realtime, batch, idempotency, failure handling.
 
-## 5. Concurrency & consistency strategy
+## 6. Concurrency & consistency strategy
 
 > TBD: transactions, locking, reprocessing.
 
-## 6. Error taxonomy
+## 7. Error taxonomy
 
 > TBD: validation, business, external, conflict, inconsistency.
 
-## 7. Testing strategy
+## 8. Testing strategy
 
 > TBD: unit / integration / e2e split, critical scenarios.
 
-## 8. Decision log
+## 9. Decision log
 
 Entry template:
 
@@ -96,7 +185,7 @@ Entry template:
 >   single public context statement; `notes/CHALLENGE.md` exists locally
 >   for faithful lookup.
 
-## 9. Open questions
+## 10. Open questions
 
 Ambiguities surfaced by reading the challenge brief against
 `INSTRUCTIONS.md`. Each must be resolved (or explicitly deferred with a

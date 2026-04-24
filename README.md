@@ -35,14 +35,23 @@ consistency, concurrency, idempotency, and resilience to external changes.
 # npm run test:e2e
 ```
 
-## Challenge brief
+## Problem space
 
-See [CHALLENGE.md](./CHALLENGE.md) for the official challenge statement.
+Time-off requests live in a system where an external HCM (Workday /
+SAP-class) is the authoritative source of truth for employment data and
+balances. Balances can change outside this service — work anniversary
+bonuses, start-of-year refreshes, direct HR edits. The HCM exposes a
+realtime API per `(employeeId, locationId)` and a batch endpoint that
+ships the full balance corpus. Its error responses on invalid dimensions
+or insufficient balance are helpful but not guaranteed — this service
+must validate defensively.
+
+See [TRD.md](./TRD.md) for the full design record, decision log, and
+open questions.
 
 ## Architecture
 
-See [TRD.md](./TRD.md) for the technical design record, decision log, and
-open questions.
+See [TRD.md](./TRD.md).
 
 ## Engineering principles
 

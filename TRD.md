@@ -45,7 +45,57 @@ would also reject.
 
 ## 2. Architecture overview
 
-> TBD.
+The service is a single NestJS process with four internal layers and
+one external integration point. Dependencies point inward:
+controllers know services, services know domain and repos, domain
+knows nothing downstream.
+
+```
+┌────────────────────────────────────────────────────────┐
+│                   HTTP API (Nest)                      │
+│   Controllers — validation, HTTP contract; no logic    │
+└────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+┌────────────────────────────────────────────────────────┐
+│                    Use cases / services                │
+│   Orchestrate domain + persistence + HCM client        │
+└────────────────────────────────────────────────────────┘
+             │               │               │
+             ▼               ▼               ▼
+┌──────────────────┐  ┌─────────────┐  ┌─────────────────┐
+│ Domain           │  │ Persistence │  │ HCM integration │
+│ Entities,        │  │ Drizzle     │  │ Client + outbox │
+│ state machine,   │  │ schema,     │  │ + push worker   │
+│ invariants       │  │ repos,      │  │ + batch intake  │
+│                  │  │ migrations  │  │                 │
+└──────────────────┘  └─────────────┘  └─────────────────┘
+                             │
+                             ▼
+                       ┌───────────────┐
+                       │ SQLite (WAL)  │
+                       └───────────────┘
+```
+
+**Nest modules.**
+
+- `TimeOffModule` — request lifecycle (create, approve, reject,
+  cancel).
+- `BalanceModule` — projection
+  (`hcm − pendingReservations − approvedNotYetPushed`).
+- `HcmModule` — client, outbox, push worker, batch intake.
+- `DatabaseModule` — Drizzle setup, migration runner, connection.
+
+**Boundary rules.**
+
+- Controllers delegate to services immediately; no branching logic
+  (§12).
+- Domain is framework-free (pure TypeScript), imported by services.
+- Persistence is behind repo interfaces; services never import
+  Drizzle directly.
+- HCM calls go through one client class; retry and idempotency live
+  in the outbox worker (see §9 *Approval commits locally; HCM push
+  via outbox* and §9 *Dual idempotency*).
 
 ## 3. HCM contract (as assumed)
 
@@ -164,7 +214,69 @@ thing to update if the real HCM diverges.
 
 ## 8. Testing strategy
 
-> TBD: unit / integration / e2e split, critical scenarios.
+Tests are the primary deliverable alongside the TRD and the code;
+every test protects a rule, a flow, or a real risk (§15).
+
+**Test pyramid.**
+
+- **Unit (`*.spec.ts` next to source).** Pure domain — state machine
+  transitions, balance-projection math, idempotency key comparison,
+  custom validators. No Nest, no DB.
+- **Integration (`test/integration/`).** Service + repos + real
+  SQLite (temp-file DB, migrations run once per suite, tables
+  truncated or rolled back per test). No HTTP, no HCM mock. Proves
+  transactional correctness at the use-case boundary.
+- **E2E (`test/e2e/`).** Full Nest app via `supertest` + real SQLite
+  + standalone mock HCM (Express app under `scripts/hcm-mock/`
+  started by a global Jest setup). Proves HTTP contract, retry
+  loops, HCM failure handling, batch intake.
+
+**Coverage targets.**
+
+- Domain layer: **≥ 95 %** (lines and branches).
+- Services / use cases: **≥ 90 %**.
+- Controllers and DTOs: sampled, not targeted — types carry most of
+  their correctness.
+- Reported via `npm run test:cov`; targets noted in the README.
+
+**Mock HCM lifecycle.**
+
+- One process per e2e suite via Jest `globalSetup` / `globalTeardown`.
+- `POST /test/reset` clears state at the start of each test.
+- `POST /test/scenario` injects failure modes (force 500, force
+  timeout, set balance, set inconsistency).
+
+**TDD ordering per feature.**
+
+1. Red: e2e test describing the user-observable outcome.
+2. Red: unit tests for the domain invariants the feature protects.
+3. Green: migration, entity, repo, service, controller — minimum to
+   pass.
+4. Red-green: edge cases (insufficient balance, duplicate, invalid
+   input).
+5. Refactor.
+
+**Conventions.**
+
+- Test names read as specifications: `it('rejects POST /requests
+  when balance is insufficient')` — not `it('works')`.
+- Determinism: time frozen with `jest.useFakeTimers` or an injected
+  clock port; UUIDs seeded.
+- Fixtures: factory functions under `test/fixtures/`, not magic JSON.
+- Concurrency tests actually interleave (parallel promises against
+  the same row), not call a function twice in sequence.
+
+**Critical scenarios guarded (from `INSTRUCTIONS.md` §15).**
+
+- Sufficient / insufficient balance.
+- Duplicated request (same `clientRequestId`).
+- Approval / rejection / cancellation transitions.
+- HCM error, HCM timeout, retry-after-crash.
+- Batch sync altering balance; conflict halting approvals on the
+  affected dimension.
+- Two concurrent operations on the same balance.
+- Invalid `(employeeId, locationId, leaveType)` combination.
+- Safe reprocessing of any outbox row.
 
 ## 9. Decision log
 

@@ -6,10 +6,7 @@ import {
   sqliteTable,
   text,
 } from 'drizzle-orm/sqlite-core';
-import {
-  hcmSyncStatusValues,
-  requestStatusValues,
-} from '../domain/request';
+import { hcmSyncStatusValues, requestStatusValues } from '../domain/request';
 
 export type { HcmSyncStatus, RequestStatus } from '../domain/request';
 

@@ -90,9 +90,7 @@ export function createPendingRequest(
  * here; the post-commit push attempt resolves it to `synced` or
  * `failed`.
  */
-export function approvePendingRequest(
-  request: TimeOffRequest,
-): TimeOffRequest {
+export function approvePendingRequest(request: TimeOffRequest): TimeOffRequest {
   if (request.status !== 'pending') {
     throw new InvalidTransitionError(request.status, 'approved');
   }

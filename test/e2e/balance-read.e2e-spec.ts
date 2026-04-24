@@ -1,5 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
-import { balances } from '../../src/database/schema';
+import {
+  approvedDeductions,
+  balances,
+  hcmOutbox,
+  holds,
+  requests,
+} from '../../src/database/schema';
 import { buildTestApp, TestContext } from '../helpers/test-app';
 
 describe('GET /balance', () => {
@@ -7,12 +14,6 @@ describe('GET /balance', () => {
 
   beforeEach(async () => {
     ctx = await buildTestApp();
-    // Reset mock HCM so an approve call's inline push succeeds
-    // (approve is used below to exercise the approvedNotYetPushed
-    // overlay).
-    await fetch(`${process.env.HCM_MOCK_URL}/test/reset`, {
-      method: 'POST',
-    });
   });
 
   afterEach(async () => {
@@ -37,60 +38,106 @@ describe('GET /balance', () => {
       .run();
   }
 
-  async function createPending(
-    overrides: {
-      employeeId: string;
-      clientRequestId: string;
-      days: number;
-    },
-  ): Promise<{ id: string }> {
-    const body = {
-      employeeId: overrides.employeeId,
-      locationId: 'loc-BR',
-      leaveType: 'PTO',
-      startDate: '2026-05-01',
-      endDate: '2026-05-02',
-      days: overrides.days,
-      clientRequestId: overrides.clientRequestId,
-    };
-    const response = await request(ctx.app.getHttpServer())
-      .post('/requests')
-      .send(body);
-    expect(response.status).toBe(201);
-    return { id: response.body.id as string };
+  /**
+   * Seeds overlay ledger rows directly against the DB so this spec
+   * isolates the read-side projection from the write flows. Using
+   * the approve use case here would require flipping the mock HCM
+   * scenario to force500, and the mock is a shared singleton across
+   * the e2e suite (Jest globalSetup starts it once) — flipping the
+   * scenario here would race with approve specs running in
+   * parallel test files. Direct seeding is the correct isolation.
+   */
+  function seedPendingHold(
+    employeeId: string,
+    locationId: string,
+    leaveType: string,
+    days: number,
+  ): void {
+    const requestId = randomUUID();
+    ctx.db
+      .insert(requests)
+      .values({
+        id: requestId,
+        employeeId,
+        locationId,
+        leaveType,
+        startDate: '2026-05-01',
+        endDate: '2026-05-02',
+        days,
+        status: 'pending',
+        hcmSyncStatus: 'not_required',
+        clientRequestId: `client-${requestId}`,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    ctx.db
+      .insert(holds)
+      .values({
+        id: randomUUID(),
+        requestId,
+        employeeId,
+        locationId,
+        leaveType,
+        days,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
   }
 
-  it('returns the overlay breakdown for a seeded dimension with pending and approved requests', async () => {
+  function seedApprovedNotYetPushedDeduction(
+    employeeId: string,
+    locationId: string,
+    leaveType: string,
+    days: number,
+  ): void {
+    const requestId = randomUUID();
+    ctx.db
+      .insert(requests)
+      .values({
+        id: requestId,
+        employeeId,
+        locationId,
+        leaveType,
+        startDate: '2026-05-03',
+        endDate: '2026-05-04',
+        days,
+        status: 'approved',
+        hcmSyncStatus: 'pending',
+        clientRequestId: `client-${requestId}`,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    ctx.db
+      .insert(approvedDeductions)
+      .values({
+        id: randomUUID(),
+        requestId,
+        employeeId,
+        locationId,
+        leaveType,
+        days,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    ctx.db
+      .insert(hcmOutbox)
+      .values({
+        id: randomUUID(),
+        requestId,
+        idempotencyKey: randomUUID(),
+        payloadJson: '{}',
+        status: 'failed_retryable',
+        attempts: 1,
+        nextAttemptAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+  }
+
+  it('returns the overlay breakdown for a seeded dimension with pending and approved rows', async () => {
     seedBalance('emp-balance-01', 'loc-BR', 'PTO', 10);
-
-    // One pending request (2 days) — contributes to pendingDays.
-    await createPending({
-      employeeId: 'emp-balance-01',
-      clientRequestId: 'client-balance-pending',
-      days: 2,
-    });
-
-    // One approved request (3 days) — contributes to
-    // approvedNotYetPushedDays until the HCM push marks it synced.
-    // The mock defaults to 'normal' scenario on reset, so the
-    // push succeeds and drops the deduction out of the projection.
-    // To keep the deduction visible, force a transient failure so
-    // the outbox ends at failed_retryable.
-    await fetch(`${process.env.HCM_MOCK_URL}/test/scenario`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: 'force500' }),
-    });
-    const approvedPending = await createPending({
-      employeeId: 'emp-balance-01',
-      clientRequestId: 'client-balance-approved',
-      days: 3,
-    });
-    const approveResponse = await request(ctx.app.getHttpServer())
-      .post(`/requests/${approvedPending.id}/approve`)
-      .send();
-    expect(approveResponse.status).toBe(200);
-    expect(approveResponse.body.hcmSyncStatus).toBe('pending');
+    seedPendingHold('emp-balance-01', 'loc-BR', 'PTO', 2);
+    seedApprovedNotYetPushedDeduction('emp-balance-01', 'loc-BR', 'PTO', 3);
 
     const response = await request(ctx.app.getHttpServer())
       .get('/balance')

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { DATABASE } from '../../database/database.module';
 import { Db } from '../../database/connection';
 import { holds } from '../../database/schema';
@@ -49,5 +49,37 @@ export class HoldsRepository {
       )
       .get();
     return row?.total ?? 0;
+  }
+
+  /**
+   * Pending-day projection excluding the hold owned by the request
+   * currently being approved. Without the exclusion, the approve
+   * use case's balance re-check would double-count the requested
+   * days (see plan 005 Appendix A §2 step 3).
+   */
+  sumActiveHoldDaysForDimensionExcludingRequest(
+    employeeId: string,
+    locationId: string,
+    leaveType: string,
+    excludeRequestId: string,
+    executor: Db = this.db,
+  ): number {
+    const row = executor
+      .select({ total: sql<number>`COALESCE(SUM(${holds.days}), 0)` })
+      .from(holds)
+      .where(
+        and(
+          eq(holds.employeeId, employeeId),
+          eq(holds.locationId, locationId),
+          eq(holds.leaveType, leaveType),
+          ne(holds.requestId, excludeRequestId),
+        ),
+      )
+      .get();
+    return row?.total ?? 0;
+  }
+
+  deleteByRequestId(requestId: string, executor: Db = this.db): void {
+    executor.delete(holds).where(eq(holds.requestId, requestId)).run();
   }
 }

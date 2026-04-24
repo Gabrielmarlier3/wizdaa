@@ -168,3 +168,31 @@ export const hcmOutbox = sqliteTable(
     ),
   }),
 );
+
+/**
+ * `inconsistencies` is the current-state flag that halts approvals
+ * on a dimension where the most recent HCM batch made
+ * `newHcmBalance − approvedNotYetPushed < 0` (TRD §3.5 / §9
+ * *Batch sync preserves local holds; conflicts halt approvals*).
+ *
+ * Composite PK matches the `balances` grain — one row per affected
+ * dimension at any instant. Not an append-only log: each batch
+ * upserts if the predicate fires and deletes if it doesn't, so
+ * the row's presence IS the halt. A clean batch auto-clears the
+ * flag; no separate resolve endpoint (§9 decision 14).
+ */
+export const inconsistencies = sqliteTable(
+  'inconsistencies',
+  {
+    employeeId: text('employee_id').notNull(),
+    locationId: text('location_id').notNull(),
+    leaveType: text('leave_type').notNull(),
+    detectedAt: text('detected_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.employeeId, table.locationId, table.leaveType],
+    }),
+  }),
+);

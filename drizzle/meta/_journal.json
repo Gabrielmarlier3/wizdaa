@@ -15,6 +15,13 @@
       "when": 1777049177629,
       "tag": "0001_large_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1777069365572,
+      "tag": "0002_previous_polaris",
+      "breakpoints": true
     }
   ]
 }

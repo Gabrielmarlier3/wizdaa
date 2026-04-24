@@ -10,11 +10,12 @@ import {
 } from '../domain/request';
 import { hasSufficientBalance } from '../domain/balance';
 import { HcmClient } from '../hcm/hcm.client';
+import { InconsistenciesRepository } from '../hcm/repositories/inconsistencies.repository';
 import {
   InsufficientBalanceError,
   InvalidDimensionError,
 } from './create-request.use-case';
-import { RequestNotFoundError } from './errors';
+import { DimensionInconsistentError, RequestNotFoundError } from './errors';
 import { ApprovedDeductionsRepository } from './repositories/approved-deductions.repository';
 import { BalancesRepository } from './repositories/balances.repository';
 import { HcmOutboxRepository } from '../hcm/repositories/hcm-outbox.repository';
@@ -59,6 +60,7 @@ export class ApproveRequestUseCase {
     private readonly approvedDeductionsRepo: ApprovedDeductionsRepository,
     private readonly outboxRepo: HcmOutboxRepository,
     private readonly hcmClient: HcmClient,
+    private readonly inconsistenciesRepo: InconsistenciesRepository,
   ) {}
 
   async execute(cmd: ApproveRequestCommand): Promise<TimeOffRequest> {
@@ -98,6 +100,25 @@ export class ApproveRequestUseCase {
       if (!balance) {
         throw new InvalidDimensionError(
           `No balance record for (${existing.employeeId}, ${existing.locationId}, ${existing.leaveType})`,
+        );
+      }
+
+      // Inconsistency halt (TRD §3.5 / §9 decision 14). Runs before
+      // the balance re-check so a flagged dimension is rejected on
+      // the halt signal itself, not on whatever the current balance
+      // math happens to say — the flag is the operator's lever and
+      // must be respected independently of the numbers.
+      const inconsistency = this.inconsistenciesRepo.findByDimension(
+        existing.employeeId,
+        existing.locationId,
+        existing.leaveType,
+        tx,
+      );
+      if (inconsistency) {
+        throw new DimensionInconsistentError(
+          existing.employeeId,
+          existing.locationId,
+          existing.leaveType,
         );
       }
 

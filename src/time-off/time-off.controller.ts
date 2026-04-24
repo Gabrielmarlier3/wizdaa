@@ -20,7 +20,7 @@ import {
   InvalidDimensionError,
 } from './create-request.use-case';
 import { CreateRequestDto } from './dto/create-request.dto';
-import { RequestNotFoundError } from './errors';
+import { DimensionInconsistentError, RequestNotFoundError } from './errors';
 import { GetRequestUseCase } from './get-request.use-case';
 import { RejectRequestUseCase } from './reject-request.use-case';
 
@@ -101,6 +101,15 @@ export class TimeOffController {
         throw new UnprocessableEntityException({
           code: 'INVALID_DIMENSION',
           message: err.message,
+        });
+      }
+      if (err instanceof DimensionInconsistentError) {
+        throw new ConflictException({
+          code: 'DIMENSION_INCONSISTENT',
+          message: err.message,
+          employeeId: err.employeeId,
+          locationId: err.locationId,
+          leaveType: err.leaveType,
         });
       }
       throw err;

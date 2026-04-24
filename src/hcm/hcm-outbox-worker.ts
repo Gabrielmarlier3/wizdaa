@@ -17,14 +17,16 @@ import {
 export { HcmOutboxDueRow } from './repositories/hcm-outbox.repository';
 
 /**
- * After 5 attempts fail with transient outcomes, the row is promoted
- * to `failed_permanent` and `requests.hcmSyncStatus` flips to
- * `'failed'`. Exponential backoff (30s × 2^attempts) schedules only
- * the 4 retries between first failure and permanent promotion, so
- * the largest actual delay is 240s (attempts=3 → 4 min). Total
- * window before permanent ≈ 7.5 min plus HCM call time — enough to
- * survive a transient blip without leaving the overlay projection
- * degraded indefinitely.
+ * Transient failures retry on exponential backoff
+ * (`30s × 2^attempts`) until `MAX_ATTEMPTS` is hit, at which point
+ * the row is promoted to `failed_permanent` and
+ * `requests.hcmSyncStatus` flips to `'failed'`. With MAX_ATTEMPTS=5
+ * the row is scheduled at row.attempts ∈ {0,1,2,3} — producing
+ * delays of 30s, 60s, 120s, 240s — and the fifth failure
+ * (row.attempts=4) exhausts immediately without scheduling a new
+ * retry. Total window before permanent ≈ 7.5 min plus each retry's
+ * own HCM call time — enough to survive a transient blip without
+ * leaving the overlay projection degraded indefinitely.
  */
 export const MAX_ATTEMPTS = 5;
 export const BACKOFF_BASE_MS = 30_000;
@@ -96,7 +98,25 @@ export class HcmOutboxWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processRow(row: HcmOutboxDueRow): Promise<void> {
-    const payload = JSON.parse(row.payloadJson) as StoredPayload;
+    let payload: StoredPayload;
+    try {
+      payload = JSON.parse(row.payloadJson) as StoredPayload;
+    } catch (err) {
+      // A payload that cannot parse as JSON will never parse on
+      // retry either; promote to failed_permanent so we neither
+      // keep pushing a bad row nor starve the rest of the batch
+      // behind a synchronous throw out of tick().
+      const reason = `poison payload: ${err instanceof Error ? err.message : String(err)}`;
+      this.db.transaction((tx) => {
+        this.outboxRepo.markFailedPermanent(row.id, reason, tx);
+        this.requestsRepo.updateHcmSyncStatus(row.requestId, 'failed', tx);
+      });
+      this.logger.error(
+        `outbox permanent failure (parse) for request ${row.requestId}: ${reason}`,
+      );
+      return;
+    }
+
     const result = await this.hcmClient.postMutation({
       employeeId: payload.employeeId,
       locationId: payload.locationId,

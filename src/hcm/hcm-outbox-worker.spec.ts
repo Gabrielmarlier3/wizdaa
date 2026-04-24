@@ -256,6 +256,46 @@ describe('HcmOutboxWorker.tick()', () => {
     );
   });
 
+  it('marks a poison-payload row failed_permanent and continues past it instead of crashing the tick', async () => {
+    const poison = makeRow({
+      id: 'outbox-poison',
+      requestId: 'req-poison',
+      idempotencyKey: 'idem-poison',
+      payloadJson: '{this is not valid JSON',
+    });
+    const healthy = makeRow({
+      id: 'outbox-healthy',
+      requestId: 'req-healthy',
+      idempotencyKey: 'idem-healthy',
+    });
+    const {
+      worker,
+      postMutationMock,
+      markFailedPermanentMock,
+      updateHcmSyncStatusMock,
+    } = buildWorker({ dueRows: [poison, healthy] });
+
+    await worker.tick();
+
+    // Poison row: no HCM call, marked failed_permanent with a parse
+    // reason, request flips to 'failed'.
+    expect(markFailedPermanentMock).toHaveBeenCalledTimes(1);
+    const [markId, markReason] = markFailedPermanentMock.mock.calls[0];
+    expect(markId).toBe(poison.id);
+    expect(markReason).toMatch(/poison payload/i);
+    expect(updateHcmSyncStatusMock).toHaveBeenCalledWith(
+      poison.requestId,
+      'failed',
+      expect.anything(),
+    );
+    // Healthy row still gets pushed in the same tick — one bad row
+    // does not starve the batch.
+    expect(postMutationMock).toHaveBeenCalledTimes(1);
+    expect(postMutationMock.mock.calls[0][0].idempotencyKey).toBe(
+      'idem-healthy',
+    );
+  });
+
   it('processes due rows in the order returned by claimDueBatch', async () => {
     const older = makeRow({
       id: 'outbox-older',

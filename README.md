@@ -240,18 +240,48 @@ The test pyramid is declared in [TRD.md](./TRD.md) §8. Summary:
   Nest, no DB.
 - **Integration** (`test/integration/`) — service + repos against a
   temp-file SQLite with real migrations applied.
-- **E2E** (`test/e2e/`) — full Nest app over HTTP, talking to the mock
-  HCM server.
+- **E2E** (`test/e2e/`) — full Nest app over HTTP, talking to the
+  standalone mock HCM started once per run by `test/e2e/globalSetup.ts`.
 
 ```bash
 npm test                   # unit + integration
 npm run test:watch
-npm run test:cov           # with coverage report in ./coverage
+npm run test:cov           # unit + integration coverage → ./coverage
 npm run test:e2e           # e2e suite (starts mock HCM via globalSetup)
+npm run test:cov:e2e       # e2e coverage → ./coverage-e2e
 ```
 
-Coverage targets: domain layer ≥ 95 %, services ≥ 90 % (see
-[TRD.md](./TRD.md) §8).
+Coverage targets are declared in [TRD.md](./TRD.md) §8: domain layer
+≥ 95 %, services ≥ 90 %. The proof-of-coverage artefact lives at
+[`docs/coverage.md`](./docs/coverage.md) — that file holds both
+runs' summary tables, a breakdown of which uncovered lines are
+defensive code, and a regen recipe.
+
+### Critical scenarios (INSTRUCTIONS.md §15)
+
+Every scenario §15 names is exercised by at least one spec. This
+table is the link from the brief's checklist into the code so a
+reviewer can audit each rule directly.
+
+| §15 scenario                                       | Covered by |
+| -------------------------------------------------- | ---------- |
+| Sufficient balance (happy path)                    | `test/e2e/time-off-create.e2e-spec.ts`, `test/e2e/time-off-approve.e2e-spec.ts` |
+| Insufficient balance — at create-time              | `test/e2e/time-off-create.e2e-spec.ts` |
+| Insufficient balance — re-check at approve         | `test/integration/approve-request.spec.ts` |
+| Duplicated request (same `clientRequestId`)        | `test/e2e/time-off-create.e2e-spec.ts` |
+| Approval                                           | `test/e2e/time-off-approve.e2e-spec.ts` |
+| Rejection                                          | `test/e2e/time-off-reject.e2e-spec.ts`, `test/integration/reject-request.spec.ts` |
+| Cancellation                                       | `test/e2e/time-off-cancel.e2e-spec.ts`, `test/integration/cancel-request.spec.ts` |
+| HCM error (5xx, 4xx, malformed 2xx)                | `test/e2e/time-off-approve.e2e-spec.ts`, `test/e2e/hcm-outbox-worker.e2e-spec.ts` |
+| HCM timeout                                        | `test/e2e/time-off-approve.e2e-spec.ts` (`forceTimeout`) |
+| Batch sync changing balance                        | `test/integration/batch-balance-intake.spec.ts`, `test/e2e/hcm-batch-intake.e2e-spec.ts` |
+| Batch conflict halts further approvals             | `test/e2e/time-off-batch-inconsistency.e2e-spec.ts` |
+| Two concurrent operations on the same balance      | `test/e2e/time-off-approve.e2e-spec.ts` (`Promise.all` interleave) |
+| Invalid `(employee, location, leaveType)` triple   | `test/e2e/time-off-create.e2e-spec.ts`, `test/integration/approve-request.spec.ts` |
+| Safe reprocessing — idempotent replay              | `test/e2e/time-off-approve.e2e-spec.ts`, `test/e2e/hcm-outbox-worker.e2e-spec.ts`, `test/e2e/hcm-mock-contract.e2e-spec.ts` |
+| Outbox-row terminal-state guards                   | `test/integration/hcm-outbox-repository.spec.ts` |
+| Inconsistencies repo lifecycle                     | `test/integration/inconsistencies-repository.spec.ts` |
+| Worker drains failed_retryable rows                | `test/e2e/hcm-outbox-worker.e2e-spec.ts`, `test/e2e/time-off-outbox-worker.e2e-spec.ts` |
 
 ## Problem space
 

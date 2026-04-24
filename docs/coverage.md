@@ -189,12 +189,18 @@ functions / 88.09 % lines. 11 suites, 41 tests.
 - **E2E** — `test/e2e/*.e2e-spec.ts`, 11 files: each HTTP
   endpoint's happy + error paths, the HCM mock contract, the
   outbox worker's full-loop recovery against real mock
-  scenarios, the batch-intake halt + auto-clear user journey.
+  scenarios, the batch-intake halt + auto-clear user journey,
+  plus the §15 forceTimeout coverage added in plan 011.
 
-Total: 122 tests green.
+Total: 123 tests green (81 unit/integration + 42 e2e).
 
 ## Change log
 
 - 2026-04-24 — Initial baseline committed alongside plan 011's
   README refresh. Targets met. `docs/coverage.md` established as
   the proof-of-coverage artefact.
+- 2026-04-24 — `+1` e2e: forceTimeout scenario added to close a
+  §15 gap (HCM timeout). E2e count: 41 → 42. Aggregate file-
+  level percentages above unchanged (HcmClient was already
+  exercised by force500 / forceBadShape; the new spec adds a
+  case but no new lines).

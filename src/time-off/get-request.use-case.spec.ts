@@ -4,9 +4,7 @@ import { GetRequestUseCase } from './get-request.use-case';
 import { RequestsRepository } from './repositories/requests.repository';
 
 describe('GetRequestUseCase', () => {
-  function build(
-    row: TimeOffRequest | undefined,
-  ): {
+  function build(row: TimeOffRequest | undefined): {
     useCase: GetRequestUseCase;
     findByIdMock: jest.Mock;
   } {

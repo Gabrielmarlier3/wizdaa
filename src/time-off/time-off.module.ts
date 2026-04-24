@@ -30,10 +30,6 @@ import { TimeOffController } from './time-off.controller';
   // Exported so BalanceModule (and any future read-side module)
   // can inject the three overlay-projection repositories without
   // duplicating provider instances.
-  exports: [
-    BalancesRepository,
-    HoldsRepository,
-    ApprovedDeductionsRepository,
-  ],
+  exports: [BalancesRepository, HoldsRepository, ApprovedDeductionsRepository],
 })
 export class TimeOffModule {}

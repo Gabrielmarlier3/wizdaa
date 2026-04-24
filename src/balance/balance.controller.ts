@@ -1,15 +1,7 @@
-import {
-  Controller,
-  Get,
-  NotFoundException,
-  Query,
-} from '@nestjs/common';
+import { Controller, Get, NotFoundException, Query } from '@nestjs/common';
 import { GetBalanceQueryDto } from './dto/get-balance-query.dto';
 import { BalanceNotFoundError } from './errors';
-import {
-  BalanceProjection,
-  GetBalanceUseCase,
-} from './get-balance.use-case';
+import { BalanceProjection, GetBalanceUseCase } from './get-balance.use-case';
 
 @Controller('balance')
 export class BalanceController {

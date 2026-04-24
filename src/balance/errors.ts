@@ -4,9 +4,7 @@ export class BalanceNotFoundError extends Error {
     public readonly locationId: string,
     public readonly leaveType: string,
   ) {
-    super(
-      `No balance record for (${employeeId}, ${locationId}, ${leaveType})`,
-    );
+    super(`No balance record for (${employeeId}, ${locationId}, ${leaveType})`);
     this.name = 'BalanceNotFoundError';
   }
 }

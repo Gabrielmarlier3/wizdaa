@@ -2,10 +2,10 @@ import { Db } from '../database/connection';
 import { HcmOutboxRepository } from '../time-off/repositories/hcm-outbox.repository';
 import { RequestsRepository } from '../time-off/repositories/requests.repository';
 import { HcmClient, HcmMutationResult } from './hcm.client';
-import { HcmOutboxRow, HcmOutboxWorker } from './hcm-outbox-worker';
+import { HcmOutboxDueRow, HcmOutboxWorker } from './hcm-outbox-worker';
 
 interface BuildOptions {
-  dueRows?: HcmOutboxRow[];
+  dueRows?: HcmOutboxDueRow[];
   hcmResult?: HcmMutationResult;
 }
 
@@ -20,16 +20,17 @@ interface BuildResult {
 }
 
 function buildWorker(options: BuildOptions = {}): BuildResult {
-  const claimDueBatchMock = jest
-    .fn()
-    .mockReturnValue(options.dueRows ?? []);
+  const claimDueBatchMock = jest.fn().mockReturnValue(options.dueRows ?? []);
   const markSyncedMock = jest.fn();
   const markFailedRetryableMock = jest.fn();
   const markFailedPermanentMock = jest.fn();
   const updateHcmSyncStatusMock = jest.fn();
-  const postMutationMock = jest.fn().mockResolvedValue(
-    options.hcmResult ?? ({ kind: 'ok', hcmMutationId: 'hcm-mut-1' } as const),
-  );
+  const postMutationMock = jest
+    .fn()
+    .mockResolvedValue(
+      options.hcmResult ??
+        ({ kind: 'ok', hcmMutationId: 'hcm-mut-1' } as const),
+    );
 
   const outboxRepo = {
     claimDueBatch: claimDueBatchMock,
@@ -52,12 +53,7 @@ function buildWorker(options: BuildOptions = {}): BuildResult {
     transaction: <T>(fn: (tx: Db) => T): T => fn({} as unknown as Db),
   } as unknown as Db;
 
-  const worker = new HcmOutboxWorker(
-    db,
-    outboxRepo,
-    requestsRepo,
-    hcmClient,
-  );
+  const worker = new HcmOutboxWorker(db, outboxRepo, requestsRepo, hcmClient);
 
   return {
     worker,
@@ -70,7 +66,7 @@ function buildWorker(options: BuildOptions = {}): BuildResult {
   };
 }
 
-function makeRow(overrides: Partial<HcmOutboxRow> = {}): HcmOutboxRow {
+function makeRow(overrides: Partial<HcmOutboxDueRow> = {}): HcmOutboxDueRow {
   return {
     id: 'outbox-1',
     requestId: 'req-1',
@@ -92,8 +88,12 @@ function makeRow(overrides: Partial<HcmOutboxRow> = {}): HcmOutboxRow {
 
 describe('HcmOutboxWorker.tick()', () => {
   it('is a no-op when no rows are due', async () => {
-    const { worker, postMutationMock, markSyncedMock, updateHcmSyncStatusMock } =
-      buildWorker({ dueRows: [] });
+    const {
+      worker,
+      postMutationMock,
+      markSyncedMock,
+      updateHcmSyncStatusMock,
+    } = buildWorker({ dueRows: [] });
 
     await worker.tick();
 

@@ -19,9 +19,7 @@ describe('GetBalanceUseCase', () => {
     approvedSumMock: jest.Mock;
   } {
     const findByDimensionMock = jest.fn().mockReturnValue(options.balance);
-    const pendingSumMock = jest
-      .fn()
-      .mockReturnValue(options.pendingDays ?? 0);
+    const pendingSumMock = jest.fn().mockReturnValue(options.pendingDays ?? 0);
     const approvedSumMock = jest
       .fn()
       .mockReturnValue(options.approvedNotYetPushedDays ?? 0);
@@ -129,11 +127,7 @@ describe('GetBalanceUseCase', () => {
       leaveType: 'PTO',
     });
 
-    expect(findByDimensionMock).toHaveBeenCalledWith(
-      'emp-1',
-      'loc-1',
-      'PTO',
-    );
+    expect(findByDimensionMock).toHaveBeenCalledWith('emp-1', 'loc-1', 'PTO');
     expect(pendingSumMock).toHaveBeenCalledWith('emp-1', 'loc-1', 'PTO');
     expect(approvedSumMock).toHaveBeenCalledWith('emp-1', 'loc-1', 'PTO');
   });

@@ -1,14 +1,30 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm';
 import { DATABASE } from '../../database/database.module';
 import { Db } from '../../database/connection';
-import { hcmOutbox } from '../../database/schema';
+import { hcmOutbox, HcmOutboxStatus } from '../../database/schema';
 
 export interface HcmOutboxInsert {
   id: string;
   requestId: string;
   idempotencyKey: string;
   payloadJson: string;
+  nextAttemptAt: string;
+}
+
+/**
+ * Row shape returned to the outbox worker. Narrower than the raw
+ * table row — the worker only needs the fields required to drive a
+ * retry (idempotencyKey, payloadJson) plus the bookkeeping fields
+ * that decide the next transition (status, attempts, nextAttemptAt).
+ */
+export interface HcmOutboxDueRow {
+  id: string;
+  requestId: string;
+  idempotencyKey: string;
+  payloadJson: string;
+  status: HcmOutboxStatus;
+  attempts: number;
   nextAttemptAt: string;
 }
 
@@ -36,6 +52,40 @@ export class HcmOutboxRepository {
         nextAttemptAt: row.nextAttemptAt,
       })
       .run();
+  }
+
+  /**
+   * Returns up to `limit` rows that the outbox worker should attempt
+   * next: `pending` or `failed_retryable`, with `next_attempt_at`
+   * already in the past. Ordered by `next_attempt_at ASC` so older
+   * rows never starve. The single-process worker invariant makes
+   * row locking unnecessary.
+   */
+  claimDueBatch(
+    limit: number,
+    nowIso: string,
+    executor: Db = this.db,
+  ): HcmOutboxDueRow[] {
+    return executor
+      .select({
+        id: hcmOutbox.id,
+        requestId: hcmOutbox.requestId,
+        idempotencyKey: hcmOutbox.idempotencyKey,
+        payloadJson: hcmOutbox.payloadJson,
+        status: hcmOutbox.status,
+        attempts: hcmOutbox.attempts,
+        nextAttemptAt: hcmOutbox.nextAttemptAt,
+      })
+      .from(hcmOutbox)
+      .where(
+        and(
+          inArray(hcmOutbox.status, ['pending', 'failed_retryable']),
+          lte(hcmOutbox.nextAttemptAt, nowIso),
+        ),
+      )
+      .orderBy(asc(hcmOutbox.nextAttemptAt))
+      .limit(limit)
+      .all();
   }
 
   markSynced(

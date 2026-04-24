@@ -126,4 +126,34 @@ describe('POST /requests/:id/approve', () => {
     expect(outboxRow?.attempts).toBe(1);
     expect(outboxRow?.lastError).toMatch(/500/);
   });
+
+  it('flags the request as failed when HCM rejects the mutation permanently', async () => {
+    seedBalance('emp-approve-03', 'loc-BR', 'PTO', 10);
+    const pending = await createPendingRequest({
+      employeeId: 'emp-approve-03',
+      clientRequestId: 'client-approve-03',
+    });
+    await setScenario('forcePermanent');
+
+    const response = await request(ctx.app.getHttpServer())
+      .post(`/requests/${pending.id}/approve`)
+      .send();
+
+    // Local approval stands; only the sync status reflects that
+    // HCM refused the mutation (TRD §8.3 — our truth wins locally).
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      id: pending.id,
+      status: 'approved',
+      hcmSyncStatus: 'failed',
+    });
+
+    const outboxRow = ctx.db
+      .select()
+      .from(hcmOutbox)
+      .where(eq(hcmOutbox.requestId, pending.id))
+      .get();
+    expect(outboxRow?.status).toBe('failed_permanent');
+    expect(outboxRow?.lastError).toMatch(/409/);
+  });
 });

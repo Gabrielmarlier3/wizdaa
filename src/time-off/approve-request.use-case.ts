@@ -139,11 +139,17 @@ export class ApproveRequestUseCase {
       }
 
       // Primary concurrency fence: UPDATE ... WHERE status='pending'.
-      // A concurrent approver who committed first leaves us with 0
-      // rows changed; bail as if the request is already approved.
+      // A concurrent writer who committed first leaves us with 0
+      // rows changed; re-read the row to surface the real current
+      // status to the client (InvalidTransitionError's from field
+      // is load-bearing — clients reconcile against it per TRD §7).
       const changes = this.requestsRepo.approve(existing.id, tx);
       if (changes !== 1) {
-        throw new InvalidTransitionError('approved', 'approved');
+        const current = this.requestsRepo.findById(existing.id, tx);
+        if (!current) {
+          throw new RequestNotFoundError(existing.id);
+        }
+        throw new InvalidTransitionError(current.status, 'approved');
       }
 
       this.holdsRepo.deleteByRequestId(existing.id, tx);
@@ -185,10 +191,14 @@ export class ApproveRequestUseCase {
       } catch (err) {
         // Secondary fence (R7): the primary fence on requests.status
         // should have caught this, but UNIQUE(request_id) on the
-        // outbox is the belt-and-suspenders. Same outcome for the
-        // caller either way.
+        // outbox is the belt-and-suspenders. Re-read to report the
+        // honest current status rather than lying about it.
         if (isOutboxUniqueRequestIdViolation(err)) {
-          throw new InvalidTransitionError('approved', 'approved');
+          const current = this.requestsRepo.findById(existing.id, tx);
+          if (!current) {
+            throw new RequestNotFoundError(existing.id);
+          }
+          throw new InvalidTransitionError(current.status, 'approved');
         }
         throw err;
       }
@@ -207,12 +217,14 @@ export class ApproveRequestUseCase {
    * (local commit is durable regardless of HCM availability), and
    * the response is folded back into a short second transaction so
    * the outbox row and requests.hcm_sync_status stay coherent.
+   * Logs are emitted *after* the tx commits so a rollback cannot
+   * leave a log line that disagrees with the persisted state (§8.4).
    */
   private resolveSyncStatus(
     committed: CommittedContext,
     result: Awaited<ReturnType<HcmClient['postMutation']>>,
   ): TimeOffRequest {
-    return this.db.transaction((tx): TimeOffRequest => {
+    const resolved = this.db.transaction((tx): TimeOffRequest => {
       switch (result.kind) {
         case 'ok':
           this.outboxRepo.markSynced(
@@ -228,9 +240,6 @@ export class ApproveRequestUseCase {
           );
           return { ...committed.approved, hcmSyncStatus: 'synced' };
         case 'permanent':
-          this.logger.error(
-            `HCM rejected mutation permanently for request ${committed.approved.id}: ${JSON.stringify(result.body)}`,
-          );
           this.outboxRepo.markFailedPermanent(
             committed.outboxId,
             `status=${result.status} body=${JSON.stringify(result.body)}`,
@@ -243,9 +252,6 @@ export class ApproveRequestUseCase {
           );
           return { ...committed.approved, hcmSyncStatus: 'failed' };
         case 'transient':
-          this.logger.warn(
-            `HCM push for request ${committed.approved.id} failed transiently: ${result.reason}`,
-          );
           this.outboxRepo.markFailedRetryable(
             committed.outboxId,
             result.reason,
@@ -257,6 +263,19 @@ export class ApproveRequestUseCase {
           return committed.approved;
       }
     });
+
+    // Post-commit side effects: logs reflect what was persisted.
+    if (result.kind === 'permanent') {
+      this.logger.error(
+        `HCM rejected mutation permanently for request ${committed.approved.id}: ${JSON.stringify(result.body)}`,
+      );
+    } else if (result.kind === 'transient') {
+      this.logger.warn(
+        `HCM push for request ${committed.approved.id} failed transiently: ${result.reason}`,
+      );
+    }
+
+    return resolved;
   }
 
   private nextAttemptAt(): string {

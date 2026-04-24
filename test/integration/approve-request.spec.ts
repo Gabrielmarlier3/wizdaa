@@ -4,6 +4,7 @@ import {
   balances,
   hcmOutbox,
   holds,
+  inconsistencies,
   requests,
 } from '../../src/database/schema';
 import {
@@ -12,6 +13,7 @@ import {
   InvalidDimensionError,
 } from '../../src/time-off/create-request.use-case';
 import { ApproveRequestUseCase } from '../../src/time-off/approve-request.use-case';
+import { DimensionInconsistentError } from '../../src/time-off/errors';
 import { buildTestApp, TestContext } from '../helpers/test-app';
 
 describe('ApproveRequestUseCase (integration)', () => {
@@ -133,6 +135,65 @@ describe('ApproveRequestUseCase (integration)', () => {
 
     // Rollback: request pending, hold intact, no ledger / outbox
     // side effects.
+    const reqRow = ctx.db
+      .select()
+      .from(requests)
+      .where(eq(requests.id, pending.id))
+      .get();
+    expect(reqRow?.status).toBe('pending');
+    expect(reqRow?.hcmSyncStatus).toBe('not_required');
+
+    const holdRow = ctx.db
+      .select()
+      .from(holds)
+      .where(eq(holds.requestId, pending.id))
+      .get();
+    expect(holdRow).toBeDefined();
+
+    const dedRow = ctx.db
+      .select()
+      .from(approvedDeductions)
+      .where(eq(approvedDeductions.requestId, pending.id))
+      .get();
+    expect(dedRow).toBeUndefined();
+
+    const outboxRow = ctx.db
+      .select()
+      .from(hcmOutbox)
+      .where(eq(hcmOutbox.requestId, pending.id))
+      .get();
+    expect(outboxRow).toBeUndefined();
+  });
+
+  it('throws DimensionInconsistentError and rolls back when the dimension is flagged by the last HCM batch', async () => {
+    seedBalance('emp-halt', 'loc-BR', 'PTO', 10);
+
+    const pending = createRequest.execute({
+      employeeId: 'emp-halt',
+      locationId: 'loc-BR',
+      leaveType: 'PTO',
+      startDate: '2026-05-01',
+      endDate: '2026-05-02',
+      days: 2,
+      clientRequestId: 'client-halt-01',
+    });
+    expect(pending.status).toBe('pending');
+
+    ctx.db
+      .insert(inconsistencies)
+      .values({
+        employeeId: 'emp-halt',
+        locationId: 'loc-BR',
+        leaveType: 'PTO',
+        detectedAt: '2026-04-24T00:00:00.000Z',
+        updatedAt: '2026-04-24T00:00:00.000Z',
+      })
+      .run();
+
+    await expect(
+      approveRequest.execute({ requestId: pending.id }),
+    ).rejects.toBeInstanceOf(DimensionInconsistentError);
+
     const reqRow = ctx.db
       .select()
       .from(requests)

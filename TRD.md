@@ -136,6 +136,16 @@ thing to update if the real HCM diverges.
 > hook extensible without speculation. See §9 decision *"Balance
 > dimension includes leaveType"*.
 
+### 3.7 Time and timezone
+
+- All timestamps exchanged with the HCM are UTC.
+- Date-bounded fields on time-off requests (`startDate`, `endDate`)
+  are `YYYY-MM-DD` calendar strings with no time component and no
+  offset, interpreted as UTC dates.
+- This service normalizes anything it receives to UTC on ingress and
+  serializes UTC on egress; the mock HCM implements and asserts the
+  same. See §9 decision *"HCM and this service operate in UTC"*.
+
 ## 4. Data model
 
 > TBD: entities, state machines, invariants.
@@ -377,13 +387,37 @@ Entry template:
 >   cancellation use case; balance-release test. Affects every
 >   state-transition test.
 
+---
+
+> **2026-04-24 — HCM and this service operate in UTC**
+> - **Decision:** both the HCM and this service treat all timestamps
+>   and date-bounded fields as UTC. Time-off request `startDate` and
+>   `endDate` are `YYYY-MM-DD` calendar strings interpreted as UTC
+>   dates with no time component. The mock HCM implements and asserts
+>   this behavior.
+> - **Reason:** removes an entire class of day-boundary divergence
+>   bugs — same-day request landing on different business dates
+>   across systems — without adding a timezone-conversion layer. The
+>   brief does not specify a timezone, so the safest default is the
+>   one servers already share. Aligns with §8.2 (simplicity) and §8.3
+>   (defensive).
+> - **Alternatives considered:**
+>   - *Per-location timezone with conversion layer.* Rejected: adds
+>     a timezone database dependency and daylight-savings logic for
+>     no evidence-based benefit. Can be layered on later if a real
+>     location-specific behavior emerges.
+>   - *Service-local timezone with HCM translation.* Rejected:
+>     introduces implicit conversion at every boundary and makes
+>     reasoning about day transitions ambiguous.
+> - **Impact:** §3.7 pins UTC explicitly; all timestamp columns are
+>   UTC; request DTOs accept date-only strings; tests assert UTC
+>   serialization.
+
 ## 10. Open questions
 
-### Resolved (see §9 decision log)
-
-The six questions surfaced during session 2 are all closed by the
-2026-04-24 decision entries in §9. Kept here as pointers so the
-trajectory from *question* to *decision* remains navigable:
+All questions surfaced so far are closed; pointers into the §9
+decision entries are kept here so the trajectory from *question* to
+*decision* stays navigable.
 
 1. **Balance reservation timing — creation vs approval.**
    → §9 *Reserve balance at creation as pending hold*.
@@ -397,16 +431,5 @@ trajectory from *question* to *decision* remains navigable:
    → §9 *Balance dimension includes leaveType (default PTO)*.
 6. **Mock HCM shape — real server vs in-process double.**
    → §9 *Mock HCM is a standalone Express app under scripts/hcm-mock/*.
-
-### Still open
-
-1. **Clock / timezone authority for `startDate` and `endDate`.**
-   Leave requests are date-bounded. If the HCM operates in a different
-   timezone than this service, a same-day request can land on
-   different business dates across systems, creating subtle
-   day-boundary divergences. Unresolved because the real HCM's
-   timezone behavior is unknown. Likely mitigation: represent request
-   dates as `YYYY-MM-DD` (no time component), document the assumed
-   timezone in §3, and surface mismatches via the inconsistency
-   mechanism established in §9. Final decision deferred to the
-   scaffolding round when the mock's timezone behavior is modeled.
+7. **Clock / timezone authority for `startDate` and `endDate`.**
+   → §9 *HCM and this service operate in UTC*.

@@ -76,19 +76,20 @@ export class BalancesRepository {
    * Deletes every `balances` row whose composite key is NOT in
    * `keep`. Implemented by reading the existing key-set,
    * diffing in app memory, and issuing a DELETE per stale row.
-   * The in-memory diff avoids SQLite's lack of tuple-aware NOT IN
-   * and the delimiter-collision risk of string-concatenation
-   * tricks; at the scale of HCM's periodic full-corpus batches
+   * The in-memory diff sidesteps SQLite's lack of tuple-aware
+   * NOT IN; at the scale of HCM's periodic full-corpus batches
    * (low thousands of dimensions) the extra round-trips are
    * immaterial.
+   *
+   * Keys are encoded as JSON-stringified tuples rather than a
+   * delimited string so a business identifier that happens to
+   * contain any character cannot collide with another tuple.
    *
    * An empty `keep` array deletes every row. Callers that mean
    * "don't delete anything" must check their input before calling.
    */
   deleteNotInSet(keep: BalanceDimension[], executor: Db = this.db): void {
-    const keepSet = new Set(
-      keep.map((d) => `${d.employeeId}|${d.locationId}|${d.leaveType}`),
-    );
+    const keepSet = new Set(keep.map(encodeDimensionKey));
     const existing = executor
       .select({
         employeeId: balances.employeeId,
@@ -98,8 +99,7 @@ export class BalancesRepository {
       .from(balances)
       .all();
     for (const e of existing) {
-      const key = `${e.employeeId}|${e.locationId}|${e.leaveType}`;
-      if (keepSet.has(key)) continue;
+      if (keepSet.has(encodeDimensionKey(e))) continue;
       executor
         .delete(balances)
         .where(
@@ -112,4 +112,8 @@ export class BalancesRepository {
         .run();
     }
   }
+}
+
+function encodeDimensionKey(d: BalanceDimension): string {
+  return JSON.stringify([d.employeeId, d.locationId, d.leaveType]);
 }

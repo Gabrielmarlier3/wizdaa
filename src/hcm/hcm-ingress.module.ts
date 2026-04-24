@@ -21,6 +21,5 @@ import { HcmIngressController } from './hcm-ingress.controller';
   imports: [HcmModule, TimeOffModule],
   controllers: [HcmIngressController],
   providers: [BatchBalanceIntakeUseCase],
-  exports: [BatchBalanceIntakeUseCase],
 })
 export class HcmIngressModule {}

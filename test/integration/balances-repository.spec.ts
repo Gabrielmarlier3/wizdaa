@@ -147,6 +147,27 @@ describe('BalancesRepository batch writes', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ employeeId: 'emp-1', locationId: 'loc-BR' });
     });
+
+    it('is safe against delimiter-like characters in identifier fields', () => {
+      // Adversarial but legal values: a naive `${a}|${b}|${c}`
+      // encoding would collapse these two triples to the same
+      // string and silently keep one of them.
+      repo.upsertBatch([
+        makeRow({ employeeId: 'emp|loc', locationId: 'BR', leaveType: 'PTO' }),
+        makeRow({ employeeId: 'emp', locationId: 'loc|BR', leaveType: 'PTO' }),
+      ]);
+
+      repo.deleteNotInSet([
+        { employeeId: 'emp|loc', locationId: 'BR', leaveType: 'PTO' },
+      ]);
+
+      const rows = allBalances();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        employeeId: 'emp|loc',
+        locationId: 'BR',
+      });
+    });
   });
 
   it('upsertBatch + deleteNotInSet together reproduce full-corpus replacement', () => {

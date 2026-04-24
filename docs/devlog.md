@@ -281,3 +281,59 @@ intake (the big one), read endpoints (GET /balance, GET
 Commits: `889ef27`, `1134759`, `ee8a009`, `2090769`, `ccf0fb9`,
 `3c77082`, `8f73941` (Phase A). Plan archive:
 `docs/plans/007-cancel-slice.md`.
+
+## 2026-04-24 — Session 9: read endpoints
+
+Plan 008 executed end-to-end. Two GET endpoints closing the write
+lifecycle's asymmetry — the Employee persona's "see accurate
+balance" need and the reconciliation-after-409 pattern both now
+have an HTTP surface.
+
+**Phase A (7 commits, architect-briefed).** The architect (sonnet)
+took defensible positions on every design point: the four-field
+overlay breakdown (not a single `available` number), separate
+use cases over inline controller logic, a new `BALANCE_NOT_FOUND`
+(404) code instead of overloading `INVALID_DIMENSION` (422),
+non-transactional reads (best-current-view, not snapshot), and a
+new `BalanceModule` matching TRD §2. TDD order: failing e2e →
+use case + unit specs → controller wire → e2e green, repeated per
+endpoint, plus a TRD-update commit.
+
+The one genuine structural decision was the BalanceModule vs
+"BalanceController inside TimeOffModule" tradeoff. The user
+explicitly preferred the separate module before execution started,
+so `src/balance/` now exists and `TimeOffModule` exports the three
+overlay-projection repos (`BalancesRepository`, `HoldsRepository`,
+`ApprovedDeductionsRepository`) without duplicate provider
+instances.
+
+One mid-execution fix: the balance e2e originally drove its
+`approvedNotYetPushedDays` fixture through the real approve flow
+with the mock HCM's `force500` scenario. This raced with approve
+specs running in parallel test files against the same singleton
+mock. Refactored to seed the overlay ledger rows directly against
+the DB — cleaner isolation and independent of any write path.
+
+**Phase B (reviewer, 1 commit).** Reviewer (sonnet) verdict: ship
+as-is. One should-fix (trivial: outbox seed row using
+`failed_retryable` where `pending` was simpler and better
+expressed the test's intent) + four nits (one applied: method
+name `read` → `get` for consistency with TimeOffController; three
+deferred as documented observations). Single followup commit
+applied both.
+
+**Phase C (wrap).** This entry + plan 008 archive.
+
+43 unit/integration + 24 e2e (67 total) green. TRD: 10 sections
+unchanged, 12 decision entries (+1: GET /balance response shape),
+§7 error taxonomy gains `BALANCE_NOT_FOUND`.
+
+Request lifecycle endpoints complete: create, approve, reject,
+cancel, GET-by-id, GET-balance. Remaining named in plan 005 TRD
+§10 / architect briefs: HCM batch intake (large), outbox worker
+(medium), `inconsistency`-surface endpoint (small, paired with
+batch).
+
+Commits: `de79c59`, `4320a6f`, `1815309`, `38fcfcc`, `893f57b`,
+`ecf157e`, `39bf508` (Phase A); `1b9e783` (Phase B). Plan archive:
+`docs/plans/008-read-endpoints.md`.

@@ -48,6 +48,13 @@ each step of the project. Alongside the TRD (decisions) and the code
   documentation-quality nits and no commits required. DRY
   extraction between reject and cancel explicitly deferred. Appendix
   A preserves the architect brief.
+- `008-read-endpoints.md` — the read-endpoints slice: `GET
+  /requests/:id` via TimeOffController and `GET /balance` via a new
+  `BalanceModule`. Adds `BALANCE_NOT_FOUND` (404) to the error
+  taxonomy and records decision 12 (GET /balance returns the full
+  overlay breakdown, not a single available number). One reviewer
+  should-fix applied inline. Appendix A preserves the architect
+  brief.
 
 ## Relationship to `TRD.md`
 

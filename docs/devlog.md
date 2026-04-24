@@ -149,3 +149,56 @@ story. The next slice (`POST /requests/:id/approve`) invokes the
 architect at plan time and the reviewer before push by default.
 
 Commits: `dec27f1`, `9d949a3`, `1c2da27`, `299d850`.
+
+## 2026-04-24 — Session 6: subagent discipline + approve slice
+
+Plan 005 executed end-to-end under the discipline it formalises.
+
+**Phase A (2 commits).** Moved the subagent rule into CLAUDE.md so
+it is auto-loaded every turn, and added a Plan template section to
+docs/process.md making the Architect briefing a required section
+of every archived plan. The two documents now agree.
+
+**Phase B (15 commits).** The approve slice (`POST /requests/:id/
+approve`). Architect subagent ran first on `opus` with a bias-free
+prompt; its brief is Appendix A of plan 005. TDD ordering followed
+the brief: red e2e → schema + migration (hcm_outbox,
+approved_deductions, requests.hcm_sync_status) → domain transition
++ InvalidTransitionError → repositories (approve with
+UPDATE-WHERE-status fence, delete hold, insert deduction, insert
+outbox) → HcmClient (fetch + 2s AbortController + discriminated
+outcome) → mock HCM extended with /balance/mutations and
+scenario-injection → ApproveRequestUseCase (one tx for commit, a
+second tx for post-push resolution) → controller wiring (happy
+path green) → e2e coverage of transient failure, permanent failure,
+concurrent approve, idempotent replay → integration test for
+approval-time balance re-check → mock-contract test for
+Idempotency-Key dedup → TRD §4 / §5 / §7 filled, §9 decision #11
+recorded, §10 reorganised with three new open questions.
+
+**Phase C (5 commits).** Reviewer subagent ran on the full slice
+diff. No blocking finding; six should-fix items applied as focused
+followups:
+- fix(time-off): concurrency-fence branches re-read the row to
+  report the honest currentStatus instead of hard-coding
+  'approved'; logger calls moved past the resolution tx so they
+  cannot describe state a rollback undid.
+- fix(hcm-mock): replays terminal 4xx outcomes idempotently, not
+  just 2xx — contract test added to pin the behaviour.
+- test(e2e): covers the `forceBadShape` path (R5) that had
+  defensive code but no spec.
+- test(integration): covers InvalidDimensionError at approval
+  time (the TRD §7 entry previously documented without a backing
+  spec).
+- docs(time-off): pins the holds-lifecycle invariant in a JSDoc so
+  a future slice that retains a hold post-transition surfaces the
+  need to tighten the sum query instead of silently over-counting.
+
+Two subagents used by design this session — architect pre-plan
+and reviewer pre-push — matching the CLAUDE.md rule this same
+session landed. 21 unit/integration + 13 e2e tests green.
+
+Commits (selected): `842d719`, `22c8004` (Phase A); `8eb4370`
+through `4ec127d` (Phase B, 15 commits); `65765cf`, `f126a1f`,
+`8beca28`, `7955a6d`, `31d9eac` (Phase C followups). Plan archive:
+`docs/plans/005-subagent-discipline-and-approve-slice.md`.

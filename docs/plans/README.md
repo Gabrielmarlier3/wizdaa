@@ -32,6 +32,11 @@ each step of the project. Alongside the TRD (decisions) and the code
   TRD §2 and §8, NestJS + Drizzle scaffolding, and the first TDD
   slice (`POST /requests` with happy path, idempotency, and
   insufficient balance).
+- `005-subagent-discipline-and-approve-slice.md` — subagent
+  discipline formalised in CLAUDE.md and docs/process.md, and the
+  approve slice (`POST /requests/:id/approve`) architect-briefed up
+  front and reviewer-checked before push. Appendix A preserves the
+  architect analysis in full.
 
 ## Relationship to `TRD.md`
 

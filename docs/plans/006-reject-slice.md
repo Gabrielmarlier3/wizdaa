@@ -174,8 +174,7 @@ unresolved items). TRD §6 Concurrency stays TBD.
 
 ### After Phase B
 - No blocking findings; deferred items logged in devlog.
-- `grep -iE '\b(examiner|grader)\b'` still zero across tracked
-  files.
+- Pre-push audience-language audit still clean across tracked files.
 
 ### After Phase C
 - `docs/plans/006-reject-slice.md` exists with Appendix A.
@@ -199,8 +198,8 @@ unresolved items). TRD §6 Concurrency stays TBD.
 - [ ] Reviewer pass run on the diff; findings triaged.
 - [ ] Devlog session 7 written.
 - [ ] Plan 006 archived to `docs/plans/`.
-- [ ] Theater-language audit passes (`examiner` / `grader` / `evaluator`
-      all zero matches on tracked files).
+- [ ] Pre-push audience-language audit passes (no addresses-the-
+      reader phrasing on tracked files).
 
 ---
 

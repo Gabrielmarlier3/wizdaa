@@ -5,6 +5,9 @@ import {
   sqliteTable,
   text,
 } from 'drizzle-orm/sqlite-core';
+import { requestStatusValues } from '../domain/request';
+
+export type { RequestStatus } from '../domain/request';
 
 /**
  * `balances` mirrors the authoritative HCM value per dimension
@@ -32,15 +35,6 @@ export const balances = sqliteTable(
     }),
   }),
 );
-
-export const requestStatusValues = [
-  'pending',
-  'approved',
-  'rejected',
-  'cancelled',
-] as const;
-
-export type RequestStatus = (typeof requestStatusValues)[number];
 
 /**
  * `requests` is the lifecycle row for a time-off request. The

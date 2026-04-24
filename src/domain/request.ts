@@ -1,4 +1,11 @@
-import type { RequestStatus } from '../database/schema';
+export const requestStatusValues = [
+  'pending',
+  'approved',
+  'rejected',
+  'cancelled',
+] as const;
+
+export type RequestStatus = (typeof requestStatusValues)[number];
 
 export interface TimeOffRequest {
   id: string;

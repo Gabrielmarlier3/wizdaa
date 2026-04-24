@@ -2,8 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DATABASE } from '../../database/database.module';
 import { Db } from '../../database/connection';
-import { requests, RequestStatus } from '../../database/schema';
-import { TimeOffRequest } from '../../domain/request';
+import { requests } from '../../database/schema';
+import { RequestStatus, TimeOffRequest } from '../../domain/request';
 
 type RequestRow = typeof requests.$inferSelect;
 

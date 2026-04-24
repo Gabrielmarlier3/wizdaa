@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { InvalidTransitionError, TimeOffRequest } from '../domain/request';
 import { ApproveRequestUseCase } from './approve-request.use-case';
+import { CancelRequestUseCase } from './cancel-request.use-case';
 import {
   CreateRequestUseCase,
   InsufficientBalanceError,
@@ -27,6 +28,7 @@ export class TimeOffController {
     private readonly createRequest: CreateRequestUseCase,
     private readonly approveRequest: ApproveRequestUseCase,
     private readonly rejectRequest: RejectRequestUseCase,
+    private readonly cancelRequest: CancelRequestUseCase,
   ) {}
 
   @Post()
@@ -92,6 +94,29 @@ export class TimeOffController {
   reject(@Param('id', ParseUUIDPipe) id: string): TimeOffRequest {
     try {
       return this.rejectRequest.execute({ requestId: id });
+    } catch (err) {
+      if (err instanceof RequestNotFoundError) {
+        throw new NotFoundException({
+          code: 'REQUEST_NOT_FOUND',
+          message: err.message,
+        });
+      }
+      if (err instanceof InvalidTransitionError) {
+        throw new ConflictException({
+          code: 'INVALID_TRANSITION',
+          message: err.message,
+          currentStatus: err.from,
+        });
+      }
+      throw err;
+    }
+  }
+
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancel(@Param('id', ParseUUIDPipe) id: string): TimeOffRequest {
+    try {
+      return this.cancelRequest.execute({ requestId: id });
     } catch (err) {
       if (err instanceof RequestNotFoundError) {
         throw new NotFoundException({

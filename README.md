@@ -1,19 +1,24 @@
 # Time-Off Microservice
 
-> TBD: one-paragraph overview once the first slice lands.
-
-NestJS + SQLite microservice for time-off requests, with defensive sync
-against an external HCM system. Core engineering concern: balance
-consistency, concurrency, idempotency, and resilience to external changes.
+NestJS + SQLite microservice for employee time-off requests. The HCM
+(Workday / SAP-class) is the authoritative source of truth for
+balances; this service owns the request lifecycle (create, approve,
+reject, cancel), exposes an overlay balance view, and defends against
+HCM drift via an outbox worker that retries failed pushes and a
+batch-intake endpoint that detects and halts approvals on dimensions
+where the new HCM corpus would contradict already-committed local
+deductions. Balance integrity under concurrent writes and partial
+failures is the central engineering concern — not CRUD.
 
 ## Stack
 
 - Node.js 22+
-- NestJS 11
+- NestJS 11 (TypeScript 5.7 strict)
 - SQLite via `better-sqlite3` (WAL journal mode)
-- Drizzle ORM + `drizzle-kit` for migrations
-- Jest + supertest
-- TypeScript 5.7 (strict)
+- Drizzle ORM + `drizzle-kit` for schema + migrations
+- `class-validator` + `class-transformer` for DTO contracts
+- Jest 29 + `supertest` for unit / integration / e2e tests
+- Standalone Express mock HCM for e2e scenario injection
 
 ## Quick start
 

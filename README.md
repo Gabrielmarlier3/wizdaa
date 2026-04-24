@@ -327,9 +327,13 @@ feature slice passes through a structured cycle:
 
 Artefacts:
 
-- [`docs/plans/`](./docs/plans/) — one archived plan per slice
-  (001 through 011), each with Appendix A holding the architect
-  brief. `docs/plans/README.md` is the index.
+- [`docs/plans/`](./docs/plans/) — one archived plan per slice.
+  Plans 005–010 each preserve the architect brief verbatim as
+  Appendix A; plans 001–004 predate that discipline (they are
+  the early scaffolding + process-bootstrap work), and plan 011
+  is documentation-only so the architect step was not load-
+  bearing. See `docs/plans/README.md` for the index and the
+  one-line summary of every slice.
 - [`docs/devlog.md`](./docs/devlog.md) — chronological session
   log: what got done, what deviated from the plan, what the
   reviewer flagged, what got deferred and why.

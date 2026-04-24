@@ -58,22 +58,56 @@ npm run hcm-mock           # starts the Express mock on HCM_MOCK_PORT
 
 ```
 src/
-├── main.ts                      Nest bootstrap (global ValidationPipe)
-├── app.module.ts                Root module
-└── database/                    Drizzle schema, connection, migration runner,
-                                 Nest DatabaseModule
+├── main.ts                      Nest bootstrap (global ValidationPipe, UTC).
+├── app.module.ts                Root module — wires DatabaseModule,
+│                                TimeOffModule, BalanceModule, HcmIngressModule.
+├── domain/                      Pure TypeScript — state machine transitions
+│                                and balance-projection math. No Nest, no DB.
+├── database/                    Drizzle schema, better-sqlite3 connection,
+│                                migration runner, DatabaseModule (DATABASE token).
+├── time-off/                    Request lifecycle module.
+│   ├── dto/                     DTOs for POST /requests.
+│   ├── repositories/            balances, holds, approved-deductions, requests.
+│   ├── *.use-case.ts            create / approve / reject / cancel / get-request.
+│   ├── time-off.controller.ts   POST /requests + /:id/{approve,reject,cancel} + GET /:id.
+│   └── errors.ts                RequestNotFoundError, DimensionInconsistentError.
+├── balance/                     Overlay projection module.
+│   ├── dto/                     Query DTO for GET /balance.
+│   ├── get-balance.use-case.ts  Composes hcmBalance + pending + approved-not-yet-pushed.
+│   ├── balance.controller.ts    GET /balance.
+│   └── errors.ts                BalanceNotFoundError.
+└── hcm/                         HCM integration (outbound + inbound).
+    ├── repositories/            hcm-outbox + inconsistencies (both HCM concerns).
+    ├── dto/                     DTO for POST /hcm/balances/batch.
+    ├── hcm.client.ts            Thin fetch wrapper with bounded timeout + idempotency key.
+    ├── hcm-outbox-worker.ts     Polling worker — drains failed_retryable rows.
+    ├── batch-balance-intake.use-case.ts  Full-corpus replacement + conflict detection.
+    ├── hcm-ingress.controller.ts         POST /hcm/balances/batch.
+    ├── hcm.module.ts            Client + outbox repo + inconsistencies repo.
+    └── hcm-ingress.module.ts    Third module to avoid TimeOff ↔ Hcm cycle (TRD §2).
 
 test/
-├── integration/                 Service + repo with a real temp-file SQLite
-├── e2e/                         Full Nest app via supertest against mock HCM
+├── helpers/                     buildTestApp — real temp-file SQLite per test.
+├── integration/                 Service + repos against SQLite, no HTTP.
+├── e2e/                         Full Nest app via supertest + mock HCM.
+│   ├── globalSetup.ts           Starts the mock HCM once per e2e run.
+│   └── globalTeardown.ts
 └── jest-e2e.config.ts
 
 scripts/
-└── hcm-mock/                    Standalone Express mock HCM (TRD §3, §9)
+└── hcm-mock/                    Standalone Express mock HCM (TRD §3, §9).
+
+drizzle/                         Generated SQL migrations (0000_*, 0001_*, 0002_*).
+
+docs/                            Process + design artefacts (see Agentic
+                                 development process section below).
 ```
 
-Architecture boundaries, module responsibilities, and the assumed HCM
-contract live in [TRD.md](./TRD.md) §2 and §3.
+Architecture diagram, module responsibilities, and the assumed HCM
+contract live in [TRD.md](./TRD.md) §2 and §3. Why `HcmIngressModule`
+exists as a third module (instead of just folding into HcmModule) is
+captured in the plan 010 archive under
+[`docs/plans/010-batch-intake-and-inconsistency-halt.md`](./docs/plans/010-batch-intake-and-inconsistency-halt.md).
 
 ## Testing
 

@@ -37,6 +37,11 @@ each step of the project. Alongside the TRD (decisions) and the code
   approve slice (`POST /requests/:id/approve`) architect-briefed up
   front and reviewer-checked before push. Appendix A preserves the
   architect analysis in full.
+- `006-reject-slice.md` — the reject slice
+  (`POST /requests/:id/reject`). Small, pattern-adherent: no HCM
+  interaction, no schema change, no TRD decision entry. Reviewer
+  shipped it as-is with one cosmetic nit applied in the same plan.
+  Appendix A preserves the architect brief.
 
 ## Relationship to `TRD.md`
 

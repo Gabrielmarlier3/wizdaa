@@ -202,3 +202,35 @@ Commits (selected): `842d719`, `22c8004` (Phase A); `8eb4370`
 through `4ec127d` (Phase B, 15 commits); `65765cf`, `f126a1f`,
 `8beca28`, `7955a6d`, `31d9eac` (Phase C followups). Plan archive:
 `docs/plans/005-subagent-discipline-and-approve-slice.md`.
+
+## 2026-04-24 — Session 7: reject slice
+
+Plan 006 executed end-to-end under the formalised discipline.
+
+**Phase A (7 commits, architect-briefed).** The architect subagent
+(sonnet this time — smaller slice, smaller model) confirmed the
+architectural picture: no HCM interaction on reject, no outbox, no
+schema change, single-transaction flow, hcmSyncStatus stays
+`not_required`. TDD order mirrored the approve slice structurally:
+red e2e → domain transition + unit specs → repository method →
+use case → controller wiring (happy path green) → reject-after-
+approve + unknown-id e2e → concurrent-reject integration.
+
+**Phase B (reviewer pre-push, 1 commit).** Reviewer (sonnet)
+verdict: ship as-is. Zero blocking, zero should-fix, one nit —
+`RequestNotFoundError` lived inside `approve-request.use-case.ts`
+and was imported from there by reject, creating a soft coupling
+that would compound with the next (cancel) slice. Lifted to
+`src/time-off/errors.ts` as a single-commit refactor; three import
+sites updated. The nit landing now instead of the next slice is a
+deliberate micro-investment — prevents rework mid-cancel.
+
+**Phase C (wrap).** This entry + plan 006 archive.
+
+28 unit/integration + 16 e2e (out of 44 tests total) green. No TRD
+changes — reject exercises existing §9 decisions without introducing
+a new architectural choice. §10 open questions unchanged.
+
+Commits: `f2f3bfb`, `f5fe41e`, `fb5629d`, `11516bb`, `b5b1676`,
+`c36d2c0`, `d583717` (Phase A); `5a97bbf` (Phase B). Plan archive:
+`docs/plans/006-reject-slice.md`.

@@ -70,6 +70,23 @@ export class RequestsRepository {
     return Number(result.changes);
   }
 
+  /**
+   * Guarded state transition pending → cancelled. Employee-initiated
+   * terminal transition (TRD §9 *Cancellation is a distinct terminal
+   * state from rejection*). Mirrors reject()'s fence pattern —
+   * WHERE status='pending' decides the winner under contention — and
+   * also leaves hcmSyncStatus untouched for the same reason: a
+   * pending request was never pushed to HCM.
+   */
+  cancel(id: string, executor: Db = this.db): number {
+    const result = executor
+      .update(requests)
+      .set({ status: 'cancelled' })
+      .where(and(eq(requests.id, id), eq(requests.status, 'pending')))
+      .run();
+    return Number(result.changes);
+  }
+
   updateHcmSyncStatus(
     id: string,
     hcmSyncStatus: HcmSyncStatus,

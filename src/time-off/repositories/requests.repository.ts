@@ -51,6 +51,25 @@ export class RequestsRepository {
     return Number(result.changes);
   }
 
+  /**
+   * Guarded state transition pending → rejected. Same fence pattern
+   * as approve: a concurrent writer that moved the row first leaves
+   * this call with 0 rows changed, and the caller raises
+   * InvalidTransitionError after re-reading the actual current
+   * status (plan 006 Appendix A §4 R1, §4 R2). hcmSyncStatus is
+   * intentionally NOT set here — a rejected request was never
+   * pushed to HCM and never will be, so the column stays at its
+   * creation-time default of 'not_required'.
+   */
+  reject(id: string, executor: Db = this.db): number {
+    const result = executor
+      .update(requests)
+      .set({ status: 'rejected' })
+      .where(and(eq(requests.id, id), eq(requests.status, 'pending')))
+      .run();
+    return Number(result.changes);
+  }
+
   updateHcmSyncStatus(
     id: string,
     hcmSyncStatus: HcmSyncStatus,

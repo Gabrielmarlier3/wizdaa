@@ -24,7 +24,9 @@ const config: Config = {
   collectCoverageFrom: [
     'src/**/*.(t|j)s',
     '!src/**/*.module.ts',
+    '!src/**/*.spec.ts',
     '!src/main.ts',
+    '!src/database/migrate.ts',
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'text-summary', 'lcov', 'html'],

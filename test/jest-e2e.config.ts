@@ -13,6 +13,15 @@ const config: Config = {
   },
   globalSetup: '<rootDir>/test/e2e/globalSetup.ts',
   globalTeardown: '<rootDir>/test/e2e/globalTeardown.ts',
+  collectCoverageFrom: [
+    'src/**/*.(t|j)s',
+    '!src/**/*.module.ts',
+    '!src/**/*.spec.ts',
+    '!src/main.ts',
+    '!src/database/migrate.ts',
+  ],
+  coverageDirectory: 'coverage-e2e',
+  coverageReporters: ['text', 'text-summary'],
   // The mock HCM is a single Express process started once by
   // globalSetup. Scenario flips via POST /test/scenario mutate
   // shared state that parallel workers race on — latent in the

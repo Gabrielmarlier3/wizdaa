@@ -18,8 +18,9 @@ dist/
 .env.local
 .env.*.local
 
-# Tests & coverage
+# Tests & coverage (raw Jest / nyc output; curated summary lives in docs/coverage.md)
 coverage/
+coverage-e2e/
 .nyc_output/
 
 # Logs

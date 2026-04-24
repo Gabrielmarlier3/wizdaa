@@ -88,6 +88,21 @@ each step of the project. Alongside the TRD (decisions) and the code
   transient-failure path, and TRD §3.3 notes the empty-batch
   rejection policy); three nits deferred. Records decision 14.
   Appendix A preserves the architect brief.
+- `011-readme-and-coverage-polish.md` — documentation + proof-
+  of-coverage slice. Ships `docs/coverage.md` as the brief's
+  named "proof of coverage" deliverable, refreshes README
+  topic-by-topic (overview, env vars, project structure, API
+  reference for all eight endpoints, agentic-process artefact
+  index, testing + §15 scenario map), and closes a real §15 gap
+  by adding the missing `forceTimeout` e2e spec. Phase B
+  applied three reviewer should-fix: a real bug fix
+  (`create-request.use-case.ts` was using a hard-coded
+  `approvedNotYetPushedDays = 0` placeholder that had outlived
+  its slice), an honest rewrite of the false "≥ 83 % combined
+  lines" claim in coverage.md, and a correction to the README's
+  Appendix-A wording for plans 001–004 / 011. Documentation-only
+  slice — no architect brief (subagent discipline's
+  disciplined-exception clause; reviewer still ran).
 
 ## Relationship to `TRD.md`
 

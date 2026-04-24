@@ -566,3 +566,115 @@ Commits: `03b66be`, `898ac46`, `4d680af`, `4d86915`, `7470594`,
 `77cddea`, `07e6818`, `9bedbc2`, `9d5f858`, `bd1d086` (Phase A);
 `929c991`, `ba188b0`, `12f86a9`, `3a03ad8` (Phase B). Plan
 archive: `docs/plans/010-batch-intake-and-inconsistency-halt.md`.
+
+## 2026-04-24 — Session 12: README + proof of coverage polish
+
+Plan 011 executed end-to-end. Documentation-heavy slice with two
+explicit goals: ship the brief's named "proof of coverage"
+deliverable as a curated artefact, and refresh the README so a
+first-time reviewer landing cold sees an accurate picture of the
+work. The slice doubled as a hygiene pass and surfaced one real
+bug the reviewer subagent caught.
+
+**Phase A (8 commits, no architect brief).** Documentation-only
+slice — the architect step was not load-bearing per the
+docs/process.md disciplined-exception clause. The reviewer step
+still ran in Phase B because docs drift is exactly what the
+reviewer's lens catches.
+
+- A1 (`chore(tests): wire proof-of-coverage artefact and fix
+  collectCoverageFrom`). The Jest `collectCoverageFrom` was
+  missing `!src/**/*.spec.ts`, so spec files counted as 0 %
+  source and dragged aggregates down (the `domain/` bucket read
+  19 % even though both files are 100 % covered). Fixed,
+  excluded the CLI `migrate.ts`, added a separate
+  `coverageDirectory: 'coverage-e2e'` to the e2e config, added
+  the `test:cov:e2e` script, and committed `docs/coverage.md` as
+  the proof-of-coverage artefact.
+- A2–A6 (one commit per topic): replaced the `TBD` placeholder
+  with a real overview, refreshed the stack list, expanded the
+  env-var table to every HCM_* and NODE_ENV, replaced the
+  three-item project tree with the real eight-module layout,
+  added a full API reference with example requests / responses /
+  error codes for every endpoint, and surfaced the
+  agentic-development artefacts (`docs/plans/`, `docs/devlog.md`,
+  `docs/process.md`, `docs/coverage.md`, `.claude/agents/`).
+- A7 (`docs(readme): testing section with coverage link and §15
+  scenario map`). Restated TRD §8 targets, linked
+  `docs/coverage.md`, added a table mapping every
+  INSTRUCTIONS.md §15 critical scenario to its specific spec
+  file. While building the table I noticed `forceTimeout` was a
+  scenario type with no test driving it — added the missing
+  forceTimeout e2e in a separate `test(e2e)` commit so the §15
+  HCM-timeout claim was honest before it landed in the README.
+
+The forceTimeout test surfaced an interesting Node 24 nuance:
+the lastError captured in the outbox can be either `'timeout'`
+or `'network'` depending on whether the AbortController abort
+surfaces as `AbortError` cleanly through undici's fetch
+implementation. The §15 invariant ("transient outcome, outbox
+retryable") is what matters; the relaxed assertion
+`/timeout|network/i` reflects this honestly. Tightening the
+HcmClient classifier so the label is stable is a cheap future
+slice but not load-bearing here.
+
+**Phase B (reviewer, 3 commits).** Reviewer (sonnet) verdict:
+*ship with fixes*. Three should-fix:
+
+1. **`create-request.use-case.ts:87` placeholder.** The
+   `approvedNotYetPushedDays = 0` placeholder with a comment
+   promising "the approve slice" would replace it had been
+   sitting there for eight slices. The approve slice never
+   updated the create caller (TRD §9 *Approved deductions as a
+   separate ledger table* explicitly committed to it). Effect:
+   an employee whose only available balance had already been
+   committed by a prior approval that had not yet synced could
+   still POST /requests successfully — false-positive UX, §8.3
+   defence-rule slip. Applied: injected
+   ApprovedDeductionsRepository, replaced placeholder with the
+   real `sumNotYetPushedDaysForDimension(...)` call, and added
+   `test/integration/create-request.spec.ts` with two cases
+   (overlay-blocks-create when outbox is non-synced; overlay-
+   clears when outbox is synced).
+2. **`docs/coverage.md` "≥ 83 % lines" claim was false.**
+   `create-request.use-case.ts` was 78.57 % in both runs at the
+   time (no complementary coverage). Applied: refreshed both
+   coverage tables under the post-B1 SHA and replaced the
+   aggregate claim with a per-file map that names each
+   uncovered defensive-code path explicitly. The TRD §8 services
+   target (≥ 90 %) is met on the e2e aggregate buckets; per-file
+   shortfalls are all defensive code that §15 forbids inflating.
+3. **README "001 through 011, each with Appendix A" overstated
+   the architect discipline.** Plans 001–004 predate the
+   architect-first cycle (formalised in plan 005); plan 011 is
+   documentation-only. Applied: rewrote the sentence to "plans
+   005–010 each have Appendix A; 001–004 are scaffolding; 011 is
+   docs-only" and pointed at `docs/plans/README.md` for the
+   per-slice summary.
+
+Three nits: one (coverage.md SHA staleness) was implicitly
+fixed by B2's refresh; one (README Appendix A claim) was the
+should-fix above; one (forceTimeout assertion regex) was
+acknowledged and explicitly deferred to a future HcmClient
+hardening slice.
+
+**Phase C (wrap).** This entry + plan 011 archive + plans
+README update.
+
+125 unit/integration + e2e tests green (83 + 42). TRD
+unchanged. README rewritten section by section. `docs/coverage.md`
+established as the proof-of-coverage artefact named in the
+brief. Theater-language audit clean across every tracked
+`.md` / `.ts` / `.json`.
+
+The repo a first-time reviewer sees at `git clone` now reflects
+the work: real overview, accurate project structure, full API
+reference, every env var, every §15 scenario mapped to a spec
+file, the agentic process artefacts surfaced, and a curated
+coverage report. The B1 fix also closed a real correctness gap
+that had been sitting in the create flow since plan 005.
+
+Commits: `2efb318`, `b3b8fc8`, `eebdcd6`, `f2d1a9d`, `f898e92`,
+`0cbbf82`, `d937973`, `19aa263` (Phase A); `6fbbf9c`, `ec54755`,
+`9295055` (Phase B). Plan archive:
+`docs/plans/011-readme-and-coverage-polish.md`.

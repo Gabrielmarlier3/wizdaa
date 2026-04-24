@@ -100,3 +100,21 @@ export function approvePendingRequest(request: TimeOffRequest): TimeOffRequest {
     hcmSyncStatus: 'pending',
   };
 }
+
+/**
+ * Rejection transition. Manager-initiated; terminal. Pure — the
+ * persistence write and the hold release happen in the surrounding
+ * transaction. `hcmSyncStatus` stays `not_required`: a rejected
+ * request was never told to HCM and will not be (TRD §3.6 authority
+ * boundaries). Reject is distinct from cancel (§9 *Cancellation is a
+ * distinct terminal state from rejection*).
+ */
+export function rejectPendingRequest(request: TimeOffRequest): TimeOffRequest {
+  if (request.status !== 'pending') {
+    throw new InvalidTransitionError(request.status, 'rejected');
+  }
+  return {
+    ...request,
+    status: 'rejected',
+  };
+}

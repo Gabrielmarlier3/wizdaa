@@ -69,6 +69,25 @@ each step of the project. Alongside the TRD (decisions) and the code
   to e2e, `maxWorkers: 1` on e2e config) captured in the
   session-10 devlog entry. Appendix A preserves the architect
   brief.
+- `010-batch-intake-and-inconsistency-halt.md` — the HCM batch
+  intake slice: `POST /hcm/balances/batch` accepts a full-corpus
+  balance snapshot (upsert-and-delete in one tx); per-dimension
+  conflict detection via the literal §3.5 predicate
+  (`newHcmBalance − approvedNotYetPushed < 0`, pending holds
+  excluded); a new `inconsistencies` table as current-state halt
+  flag with auto-clear on the next clean batch; and an
+  `ApproveRequestUseCase` precondition that raises
+  `DIMENSION_INCONSISTENT` (409) when a flagged dimension is
+  targeted. New `HcmIngressModule` sits as a third edge in the
+  module graph to avoid a HcmModule ↔ TimeOffModule cycle.
+  Closes TRD §10 Q9 and opens new Q11 (stranded pendings on
+  deleted dimensions). Four reviewer should-fix applied in Phase
+  B (JSON-encoded composite keys in `deleteNotInSet` to close a
+  delimiter-collision risk, ghost-inconsistency sweep for dropped
+  dimensions, e2e halt spec decoupled from the mock's
+  transient-failure path, and TRD §3.3 notes the empty-batch
+  rejection policy); three nits deferred. Records decision 14.
+  Appendix A preserves the architect brief.
 
 ## Relationship to `TRD.md`
 

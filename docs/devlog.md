@@ -451,3 +451,118 @@ decision).
 Commits: `d442d50`, `8b61644`, `2d7cbe1`, `28c7f6c`, `e8d9c22`,
 `7517bbd`, `a94ee9f`, `35efe20` (Phase A); `81071a1`, `1fc6b0d`,
 `dc4a942` (Phase B). Plan archive: `docs/plans/009-outbox-worker.md`.
+
+## 2026-04-24 — Session 11: HCM batch intake + approve-time inconsistency halt
+
+Plan 010 executed end-to-end. Closes TRD §10 Q9 (the flagged-
+dimension halt hook) by landing both the ingress endpoint that
+receives HCM's full-corpus balance snapshot and the approve-time
+precondition check that honours the halt it writes. The §3.5
+promise ("conflicts halt approvals") now has code on both sides
+— detection AND enforcement in one slice so the `inconsistencies`
+table is never a flag nobody reads.
+
+**Phase A (10 commits, architect-briefed).** The architect
+(sonnet) produced a full first-principles brief covering the
+endpoint contract, replacement semantics, conflict predicate,
+the new `inconsistencies` table shape, the `commitApproval` hook
+placement, transaction boundaries, idempotency, concurrency,
+error taxonomy, risks, and a 10-step ordered TDD plan. Two user
+decisions were locked before the brief was translated into a plan:
+
+- **Auto-clear on next clean batch** (vs manual-resolve only vs
+  hybrid). The TRD treats HCM as source of truth; a batch that no
+  longer triggers the predicate IS the authoritative "resolved"
+  signal, so forcing a human acknowledgement every time would be
+  friction without a safety gain at this scope.
+- **Predicate excludes pending holds.** TRD §3.5 literal reading:
+  `newHcmBalance − approvedNotYetPushed < 0`. Holds self-heal on
+  reject/cancel, and including them would false-positive whenever
+  many pendings are open.
+
+Mid-execution deviations from the original plan:
+
+- **Third module (`HcmIngressModule`) instead of registering in
+  `HcmModule` or `TimeOffModule`.** The use case depends on
+  `BalancesRepository` + `ApprovedDeductionsRepository` (time-off)
+  and `InconsistenciesRepository` (HCM). Registering in `HcmModule`
+  would require importing `TimeOffModule`, closing a cycle.
+  Dedicated ingress module is acyclic, explicit, and matches the
+  concern (HCM → service push).
+- **Drizzle `excluded.*` UPSERT syntax for `BalancesRepository.upsertBatch`.**
+  The initial attempt used `set: { col: (row) => row.col }` (not
+  supported on SQLite); switched to `set: { col: sql\`excluded.col\` }`
+  which is Drizzle's idiomatic escape hatch and matches SQLite's
+  ON CONFLICT pseudo-table.
+- **In-app diff for `deleteNotInSet`.** SQLite lacks tuple-aware
+  NOT IN; a string-concatenation workaround would risk delimiter
+  collision. Reading the existing key-set, diffing via a JS `Set`,
+  and deleting per-stale-row is safe at the expected batch scale
+  (low thousands of dimensions) and sidesteps both problems.
+
+**Phase B (reviewer, 4 commits).** Reviewer (sonnet) verdict:
+*ship with fixes*. Four should-fix:
+
+1. **Composite-key collision in `deleteNotInSet`.** The initial
+   encoding `\`${a}|${b}|${c}\`` collides for adversarial
+   identifier values, and the accompanying comment claimed the
+   risk was avoided while the code did the opposite. Applied:
+   switched to `JSON.stringify([a, b, c])`, added an adversarial
+   integration spec pinning the invariant.
+2. **Ghost inconsistency rows when HCM drops a dimension.** The
+   per-dimension loop only iterated over the incoming batch, so a
+   dimension deleted by `deleteNotInSet` on balances left its
+   inconsistency flag behind. Harmless in practice (subsequent
+   approves fail `INVALID_DIMENSION` first) but the table would
+   accumulate stale flags. Applied: new
+   `InconsistenciesRepository.deleteNotInSet` paralleling the
+   balances method, called before the per-dim loop in the same
+   transaction. Two new integration specs.
+3. **E2E halt spec coupled to mock's transient-failure path.**
+   The original test used `force500` to keep the first approve's
+   outbox non-synced so the deduction kept counting. A regression
+   in the mock's 500-injection could have masked a halt
+   regression. Applied: seeded the approved-not-yet-pushed state
+   directly via `ctx.db`, removing the mock-scenario flip. Spec
+   intent is now exactly "halt + auto-clear through HTTP".
+4. **Empty-balances rejection policy was undocumented.** The DTO's
+   `@ArrayMinSize(1)` rejects empty batches as 400, but the TRD
+   did not explain why. Applied: added a short bullet to §3.3
+   naming the reasoning — zero rows is ambiguous between "wipe"
+   and "malfunction", and the destructive interpretation is too
+   consequential to fire on an ambiguous payload.
+
+Plus one nit applied (`HcmIngressModule` was exporting the use
+case with no consumer, removed). Three nits deferred as
+take-it-or-leave-it readability calls (duplicated dimension
+message vs extras envelope, `async` on a sync-body use case, and
+a one-line comment at the `generatedAt` discard point).
+
+**Phase C (wrap).** This entry + plan 010 archive.
+
+81 unit/integration + 41 e2e (122 total) green. TRD: 10 sections,
+14 decision entries (+1: batch intake + auto-clear), §3.3 gains
+the empty-batch rejection note, §5 outbox+batch paragraph
+rewritten to the now-implemented flow, §6 promoted from TBD to a
+full concurrency section with the three-way ordering analysis
+(approve/reject/cancel + outbox worker + batch intake), §7 gains
+`DIMENSION_INCONSISTENT`, §10 Q9 closed, new Q11 opens for
+stranded pendings on deleted dimensions. No theater-language
+audit regressions.
+
+The integration story with HCM is now full loop: outbound pushes
+(approve inline + outbox worker retries) AND inbound batches (full
+corpus replacement + conflict detection + halt enforcement). The
+only cross-cutting concern still open is auth, which remains
+explicitly out of scope.
+
+Remaining slices named in TRD §10: inline push timeout budget
+(Q10, wait for real timings), stranded pending requests on deleted
+dimensions (Q11, operator tooling once there is a workflow), and
+— if ever needed — removing the inline push for worker-only sync
+(UX tradeoff, separate decision).
+
+Commits: `03b66be`, `898ac46`, `4d680af`, `4d86915`, `7470594`,
+`77cddea`, `07e6818`, `9bedbc2`, `9d5f858`, `bd1d086` (Phase A);
+`929c991`, `ba188b0`, `12f86a9`, `3a03ad8` (Phase B). Plan
+archive: `docs/plans/010-batch-intake-and-inconsistency-halt.md`.

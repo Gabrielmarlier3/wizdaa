@@ -14,18 +14,12 @@ import {
   InsufficientBalanceError,
   InvalidDimensionError,
 } from './create-request.use-case';
+import { RequestNotFoundError } from './errors';
 import { ApprovedDeductionsRepository } from './repositories/approved-deductions.repository';
 import { BalancesRepository } from './repositories/balances.repository';
 import { HcmOutboxRepository } from './repositories/hcm-outbox.repository';
 import { HoldsRepository } from './repositories/holds.repository';
 import { RequestsRepository } from './repositories/requests.repository';
-
-export class RequestNotFoundError extends Error {
-  constructor(id: string) {
-    super(`Request not found: ${id}`);
-    this.name = 'RequestNotFoundError';
-  }
-}
 
 export interface ApproveRequestCommand {
   requestId: string;

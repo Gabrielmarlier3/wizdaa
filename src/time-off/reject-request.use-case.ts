@@ -6,7 +6,7 @@ import {
   rejectPendingRequest,
   TimeOffRequest,
 } from '../domain/request';
-import { RequestNotFoundError } from './approve-request.use-case';
+import { RequestNotFoundError } from './errors';
 import { HoldsRepository } from './repositories/holds.repository';
 import { RequestsRepository } from './repositories/requests.repository';
 

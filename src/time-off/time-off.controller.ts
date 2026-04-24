@@ -11,16 +11,14 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InvalidTransitionError, TimeOffRequest } from '../domain/request';
-import {
-  ApproveRequestUseCase,
-  RequestNotFoundError,
-} from './approve-request.use-case';
+import { ApproveRequestUseCase } from './approve-request.use-case';
 import {
   CreateRequestUseCase,
   InsufficientBalanceError,
   InvalidDimensionError,
 } from './create-request.use-case';
 import { CreateRequestDto } from './dto/create-request.dto';
+import { RequestNotFoundError } from './errors';
 import { RejectRequestUseCase } from './reject-request.use-case';
 
 @Controller('requests')

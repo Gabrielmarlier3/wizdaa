@@ -112,3 +112,40 @@ Commits (selected): `9fd9c71` (TRD §2/§8), `3040f8b`, `17cc746`,
 `3a566c8`, `0df2f4a`, `f5c7ad9`, `96d3ce1`, `d82a7ed`, `47c869b`
 (Phase C). Plan archive:
 `docs/plans/004-trd-completion-scaffolding-and-first-slice.md`.
+
+## 2026-04-24 — Session 5: pre-push review and followups
+
+Ran the `reviewer` subagent on the 17 local commits before pushing —
+the first use of a subagent during plan 004's execution (the plan
+itself ran as a monolith, contradicting the discipline documented in
+`docs/process.md`). The review surfaced one silently-weakening bug
+and one boundary rot that would have compounded, plus a handful of
+smaller fixes.
+
+Findings applied as four commits:
+
+- `fix(time-off)`: the read-validate-insert sequence (idempotency
+  lookup, balance read, hold sum, inserts) now runs inside one
+  `db.transaction(...)`. Today this works because better-sqlite3
+  is synchronous and the event loop serializes `execute()`, but any
+  `await` inside the use case would silently break the balance
+  check. The UNIQUE-constraint race on `client_request_id` is also
+  caught and recovered idempotently instead of bubbling as 500.
+- `refactor(domain)`: `RequestStatus` and `requestStatusValues`
+  moved from `src/database/schema.ts` into `src/domain/request.ts`.
+  Schema now imports from domain — the dependency direction matches
+  TRD §2.
+- `chore`: `app.enableShutdownHooks()` so the SQLite client closes
+  on SIGTERM; `InvalidDimensionError` → 422 per TRD §3.2;
+  speculative `BalancesRepository.upsert` removed (§8.7, §10);
+  coverage-only `app.module.spec.ts` removed (§15); devlog softened
+  the "100% unit coverage" claim that had no anchored snapshot.
+- `chore(test)`: mock HCM started / stopped by Jest `globalSetup`
+  and `globalTeardown`; `jest.config.ts` now splits unit and
+  integration as projects, matching the pyramid in TRD §8.
+
+Lesson: cross-review is load-bearing for this repo's evaluation
+story. The next slice (`POST /requests/:id/approve`) invokes the
+architect at plan time and the reviewer before push by default.
+
+Commits: `dec27f1`, `9d949a3`, `1c2da27`, `299d850`.

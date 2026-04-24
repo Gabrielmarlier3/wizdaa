@@ -71,6 +71,12 @@ export class BatchBalanceIntakeUseCase {
     return this.db.transaction((tx): BatchBalanceResult => {
       this.balancesRepo.upsertBatch(rows, tx);
       this.balancesRepo.deleteNotInSet(dimensions, tx);
+      // Drop ghost inconsistency rows whose dimension is no longer
+      // in the corpus — HCM removing a dimension must also clear
+      // its halt, otherwise the `inconsistencies` table accrues
+      // stale flags indefinitely. In-batch dimensions are covered
+      // by the per-item upsert/delete branches below.
+      this.inconsistenciesRepo.deleteNotInSet(dimensions, tx);
 
       let inconsistenciesDetected = 0;
       for (const item of payload.balances) {

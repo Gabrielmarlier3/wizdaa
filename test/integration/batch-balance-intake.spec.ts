@@ -185,6 +185,33 @@ describe('BatchBalanceIntakeUseCase (integration)', () => {
     expect(inconsistencyFor('emp-1', 'loc-BR', 'PTO')).toBeUndefined();
   });
 
+  it('sweeps ghost inconsistency rows when a dimension is dropped from the corpus', async () => {
+    // Seed a balance + inconsistency for a dimension that will
+    // NOT appear in the incoming batch.
+    seedBalance('emp-ghost', 'loc-BR', 'PTO', 10);
+    ctx.db
+      .insert(inconsistencies)
+      .values({
+        employeeId: 'emp-ghost',
+        locationId: 'loc-BR',
+        leaveType: 'PTO',
+        detectedAt: '2026-04-23T12:00:00.000Z',
+        updatedAt: '2026-04-23T12:00:00.000Z',
+      })
+      .run();
+
+    // Batch contains a different dimension; emp-ghost gets dropped
+    // from balances by deleteNotInSet and must also lose its flag.
+    await useCase.execute({
+      generatedAt: '2026-04-24T12:00:00.000Z',
+      balances: [
+        { employeeId: 'emp-new', locationId: 'loc-BR', leaveType: 'PTO', balance: 5 },
+      ],
+    });
+
+    expect(inconsistencyFor('emp-ghost', 'loc-BR', 'PTO')).toBeUndefined();
+  });
+
   it('is idempotent when the same batch is replayed', async () => {
     seedBalance('emp-1', 'loc-BR', 'PTO', 10);
     seedApprovedDeduction('emp-1', 'loc-BR', 'PTO', 6);

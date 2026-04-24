@@ -100,4 +100,44 @@ describe('InconsistenciesRepository', () => {
     expect(repo.findByDimension('emp-1', 'loc-BR', 'PTO')).toBeUndefined();
     expect(repo.findByDimension('emp-2', 'loc-BR', 'PTO')).toBeDefined();
   });
+
+  describe('deleteNotInSet', () => {
+    const now = '2026-04-24T12:00:00.000Z';
+
+    it('removes rows whose composite key is absent from keep', () => {
+      repo.upsert('emp-1', 'loc-BR', 'PTO', now);
+      repo.upsert('emp-2', 'loc-BR', 'PTO', now);
+      repo.upsert('emp-3', 'loc-BR', 'PTO', now);
+
+      repo.deleteNotInSet([
+        { employeeId: 'emp-1', locationId: 'loc-BR', leaveType: 'PTO' },
+      ]);
+
+      expect(repo.findByDimension('emp-1', 'loc-BR', 'PTO')).toBeDefined();
+      expect(repo.findByDimension('emp-2', 'loc-BR', 'PTO')).toBeUndefined();
+      expect(repo.findByDimension('emp-3', 'loc-BR', 'PTO')).toBeUndefined();
+    });
+
+    it('discriminates by full composite key', () => {
+      repo.upsert('emp-1', 'loc-BR', 'PTO', now);
+      repo.upsert('emp-1', 'loc-US', 'PTO', now);
+
+      repo.deleteNotInSet([
+        { employeeId: 'emp-1', locationId: 'loc-BR', leaveType: 'PTO' },
+      ]);
+
+      expect(repo.findByDimension('emp-1', 'loc-BR', 'PTO')).toBeDefined();
+      expect(repo.findByDimension('emp-1', 'loc-US', 'PTO')).toBeUndefined();
+    });
+
+    it('empty keep-set removes every row', () => {
+      repo.upsert('emp-1', 'loc-BR', 'PTO', now);
+      repo.upsert('emp-2', 'loc-BR', 'PTO', now);
+
+      repo.deleteNotInSet([]);
+
+      expect(repo.findByDimension('emp-1', 'loc-BR', 'PTO')).toBeUndefined();
+      expect(repo.findByDimension('emp-2', 'loc-BR', 'PTO')).toBeUndefined();
+    });
+  });
 });

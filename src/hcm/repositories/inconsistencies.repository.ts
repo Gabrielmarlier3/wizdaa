@@ -12,6 +12,12 @@ export interface InconsistencyRow {
   updatedAt: string;
 }
 
+export interface InconsistencyDimension {
+  employeeId: string;
+  locationId: string;
+  leaveType: string;
+}
+
 /**
  * Current-state flag store for dimensions halted by the HCM batch
  * intake's §3.5 conflict predicate. Row presence blocks approval;
@@ -95,4 +101,44 @@ export class InconsistenciesRepository {
       )
       .run();
   }
+
+  /**
+   * Parallels {@link BalancesRepository.deleteNotInSet}: drops
+   * every inconsistency row whose composite key is NOT in `keep`.
+   * Used by the batch intake use case to clean up ghost flags
+   * when HCM drops a dimension entirely from the corpus. Keys
+   * are JSON-encoded to be collision-safe across any field
+   * values.
+   */
+  deleteNotInSet(
+    keep: InconsistencyDimension[],
+    executor: Db = this.db,
+  ): void {
+    const keepSet = new Set(keep.map(encodeDimensionKey));
+    const existing = executor
+      .select({
+        employeeId: inconsistencies.employeeId,
+        locationId: inconsistencies.locationId,
+        leaveType: inconsistencies.leaveType,
+      })
+      .from(inconsistencies)
+      .all();
+    for (const row of existing) {
+      if (keepSet.has(encodeDimensionKey(row))) continue;
+      executor
+        .delete(inconsistencies)
+        .where(
+          and(
+            eq(inconsistencies.employeeId, row.employeeId),
+            eq(inconsistencies.locationId, row.locationId),
+            eq(inconsistencies.leaveType, row.leaveType),
+          ),
+        )
+        .run();
+    }
+  }
+}
+
+function encodeDimensionKey(d: InconsistencyDimension): string {
+  return JSON.stringify([d.employeeId, d.locationId, d.leaveType]);
 }

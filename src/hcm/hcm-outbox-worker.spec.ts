@@ -147,4 +147,134 @@ describe('HcmOutboxWorker.tick()', () => {
     expect(args.days).toBe(-2);
     expect(args.clientMutationId).toBe('outbox-1');
   });
+
+  describe('transient branch', () => {
+    const fixedNow = new Date('2026-04-24T00:00:00.000Z');
+
+    beforeEach(() => {
+      jest.useFakeTimers({ now: fixedNow });
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('schedules the first retry 30s out when attempts=0', async () => {
+      const row = makeRow({ attempts: 0 });
+      const {
+        worker,
+        markFailedRetryableMock,
+        markFailedPermanentMock,
+        updateHcmSyncStatusMock,
+      } = buildWorker({
+        dueRows: [row],
+        hcmResult: { kind: 'transient', reason: 'HCM 500' },
+      });
+
+      await worker.tick();
+
+      expect(markFailedRetryableMock).toHaveBeenCalledTimes(1);
+      const [, reason, nextAt] = markFailedRetryableMock.mock.calls[0];
+      expect(reason).toBe('HCM 500');
+      expect(nextAt).toBe(
+        new Date(fixedNow.getTime() + 30_000).toISOString(),
+      );
+      expect(markFailedPermanentMock).not.toHaveBeenCalled();
+      // hcmSyncStatus stays 'pending' — we are still retrying.
+      expect(updateHcmSyncStatusMock).not.toHaveBeenCalled();
+    });
+
+    it('applies exponential backoff (attempts=2 → 120s)', async () => {
+      const row = makeRow({ attempts: 2 });
+      const { worker, markFailedRetryableMock } = buildWorker({
+        dueRows: [row],
+        hcmResult: { kind: 'transient', reason: 'timeout' },
+      });
+
+      await worker.tick();
+
+      const [, , nextAt] = markFailedRetryableMock.mock.calls[0];
+      expect(nextAt).toBe(
+        new Date(fixedNow.getTime() + 120_000).toISOString(),
+      );
+    });
+
+    it('promotes to failed_permanent and flips hcmSyncStatus to "failed" when attempts reach MAX_ATTEMPTS', async () => {
+      // attempts=4 is the final retryable state; the next transient
+      // failure is the fifth and final attempt, promoted to permanent.
+      const row = makeRow({ attempts: 4 });
+      const {
+        worker,
+        markFailedRetryableMock,
+        markFailedPermanentMock,
+        updateHcmSyncStatusMock,
+      } = buildWorker({
+        dueRows: [row],
+        hcmResult: { kind: 'transient', reason: 'HCM 500' },
+      });
+
+      await worker.tick();
+
+      expect(markFailedRetryableMock).not.toHaveBeenCalled();
+      expect(markFailedPermanentMock).toHaveBeenCalledTimes(1);
+      expect(markFailedPermanentMock.mock.calls[0][1]).toMatch(
+        /exhausted after 5 attempts/,
+      );
+      expect(updateHcmSyncStatusMock).toHaveBeenCalledWith(
+        row.requestId,
+        'failed',
+        expect.anything(),
+      );
+    });
+  });
+
+  it('flips hcmSyncStatus to "failed" on a permanent HCM rejection', async () => {
+    const row = makeRow();
+    const {
+      worker,
+      markFailedPermanentMock,
+      markFailedRetryableMock,
+      updateHcmSyncStatusMock,
+    } = buildWorker({
+      dueRows: [row],
+      hcmResult: {
+        kind: 'permanent',
+        status: 409,
+        body: { code: 'insufficient_balance' },
+      },
+    });
+
+    await worker.tick();
+
+    expect(markFailedPermanentMock).toHaveBeenCalledTimes(1);
+    expect(markFailedPermanentMock.mock.calls[0][1]).toMatch(/status=409/);
+    expect(markFailedRetryableMock).not.toHaveBeenCalled();
+    expect(updateHcmSyncStatusMock).toHaveBeenCalledWith(
+      row.requestId,
+      'failed',
+      expect.anything(),
+    );
+  });
+
+  it('processes due rows in the order returned by claimDueBatch', async () => {
+    const older = makeRow({
+      id: 'outbox-older',
+      requestId: 'req-older',
+      idempotencyKey: 'idem-older',
+      nextAttemptAt: '2026-04-24T00:00:00.000Z',
+    });
+    const newer = makeRow({
+      id: 'outbox-newer',
+      requestId: 'req-newer',
+      idempotencyKey: 'idem-newer',
+      nextAttemptAt: '2026-04-24T00:00:10.000Z',
+    });
+    const { worker, postMutationMock } = buildWorker({ dueRows: [older, newer] });
+
+    await worker.tick();
+
+    expect(postMutationMock).toHaveBeenCalledTimes(2);
+    expect(postMutationMock.mock.calls[0][0].idempotencyKey).toBe('idem-older');
+    expect(postMutationMock.mock.calls[1][0].idempotencyKey).toBe('idem-newer');
+  });
 });

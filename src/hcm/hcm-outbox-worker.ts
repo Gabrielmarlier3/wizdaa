@@ -13,14 +13,15 @@ export { HcmOutboxDueRow } from '../time-off/repositories/hcm-outbox.repository'
 /**
  * After 5 attempts fail with transient outcomes, the row is promoted
  * to `failed_permanent` and `requests.hcmSyncStatus` flips to
- * `'failed'`. With exponential backoff (30s × 2^attempts, capped at
- * 30 min) the total window before permanent is ~15 minutes — long
- * enough to survive a transient HCM outage without leaving the
- * overlay projection degraded indefinitely.
+ * `'failed'`. Exponential backoff (30s × 2^attempts) schedules only
+ * the 4 retries between first failure and permanent promotion, so
+ * the largest actual delay is 240s (attempts=3 → 4 min). Total
+ * window before permanent ≈ 7.5 min plus HCM call time — enough to
+ * survive a transient blip without leaving the overlay projection
+ * degraded indefinitely.
  */
 export const MAX_ATTEMPTS = 5;
 export const BACKOFF_BASE_MS = 30_000;
-export const BACKOFF_CAP_MS = 30 * 60_000;
 export const BATCH_SIZE = 10;
 
 interface StoredPayload {
@@ -128,7 +129,7 @@ export class HcmOutboxWorker {
   }
 
   private nextAttemptAt(attempts: number): string {
-    const delay = Math.min(BACKOFF_BASE_MS * 2 ** attempts, BACKOFF_CAP_MS);
+    const delay = BACKOFF_BASE_MS * 2 ** attempts;
     return new Date(Date.now() + delay).toISOString();
   }
 }

@@ -42,6 +42,12 @@ each step of the project. Alongside the TRD (decisions) and the code
   interaction, no schema change, no TRD decision entry. Reviewer
   shipped it as-is with one cosmetic nit applied in the same plan.
   Appendix A preserves the architect brief.
+- `007-cancel-slice.md` — the cancel slice
+  (`POST /requests/:id/cancel`). Mechanical twin of reject with the
+  terminal state swapped. Reviewer shipped as-is with three
+  documentation-quality nits and no commits required. DRY
+  extraction between reject and cancel explicitly deferred. Appendix
+  A preserves the architect brief.
 
 ## Relationship to `TRD.md`
 

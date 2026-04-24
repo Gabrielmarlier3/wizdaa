@@ -234,3 +234,50 @@ a new architectural choice. §10 open questions unchanged.
 Commits: `f2f3bfb`, `f5fe41e`, `fb5629d`, `11516bb`, `b5b1676`,
 `c36d2c0`, `d583717` (Phase A); `5a97bbf` (Phase B). Plan archive:
 `docs/plans/006-reject-slice.md`.
+
+## 2026-04-24 — Session 8: cancel slice
+
+Plan 007 executed end-to-end. Cancel is the mechanical twin of
+reject — same single-transaction flow, same concurrency fence, no
+HCM interaction — with `cancelled` replacing `rejected` as the
+terminal state and Employee replacing Manager as the nominal actor
+(TRD §9 *Cancellation is a distinct terminal state from
+rejection*).
+
+**Phase A (7 commits, architect-briefed).** The architect (sonnet)
+confirmed: no schema change, no TRD decision entry, no new
+machinery. The slice exercises the §9 decision that had been
+sitting in the TRD since plan 005 without an executing path. TDD
+order mirrored plan 006 exactly: failing e2e → domain transition
+with 6 unit specs → repo method → use case → controller + module
+wire → cancel-after-approve + unknown-id e2e → concurrent-cancel
+integration.
+
+**Phase B (reviewer pre-push, 0 commits).** Reviewer (sonnet)
+verdict: ship as-is. One finding started, then self-retracted
+during the review itself — the reviewer wrote a "should fix" about
+`cancel` controller method not being async, then corrected
+themselves in the same entry after re-reading and confirming
+parity with reject. Three nits landed, all documentation-quality
+observations that do not warrant a commit. The DRY-pressure check
+explicitly reaffirmed the deferral: `RejectRequestUseCase` and
+`CancelRequestUseCase` are now byte-for-byte identical except for
+the literal `'rejected'` / `'cancelled'`, but two clear files beat
+one generic file with a mode parameter. Extraction waits for a
+third genuinely-same-shape transition or reviewer pressure that
+isn't defensively deferred.
+
+**Phase C (wrap).** This entry + plan 007 archive.
+
+35 unit/integration + 19 e2e (54 total) green. TRD unchanged
+(§10 sections, 11 decision entries). No theater-language audit
+regressions.
+
+Lifecycle is now complete at the HTTP level: create, approve,
+reject, cancel. The remaining slices in the brief are HCM batch
+intake (the big one), read endpoints (GET /balance, GET
+/requests/:id), and the outbox worker for resilience.
+
+Commits: `889ef27`, `1134759`, `ee8a009`, `2090769`, `ccf0fb9`,
+`3c77082`, `8f73941` (Phase A). Plan archive:
+`docs/plans/007-cancel-slice.md`.

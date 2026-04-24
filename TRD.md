@@ -145,6 +145,12 @@ thing to update if the real HCM diverges.
 - Assumed to carry the full balance corpus on each call. Partial
   batches would require separate signaling and are out of scope until
   the real HCM indicates otherwise.
+- An empty `balances` array is rejected with `400` at the
+  `ValidationPipe`. Zero rows is ambiguous — it could mean "HCM
+  wiped every balance" or "HCM is malfunctioning" — and the
+  destructive "wipe all" interpretation is too consequential to
+  trigger on a malformed-looking payload. A real wipe would need
+  its own signal (§8.1 defers).
 - Idempotent: a replay of the same batch produces the same end state.
 
 ### 3.4 Balance semantics

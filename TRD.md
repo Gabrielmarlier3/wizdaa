@@ -350,7 +350,8 @@ is backed by an e2e or integration spec in the current tree.
 | `REQUEST_NOT_FOUND`     | 404    | Approve (or a future GET / reject / cancel) receives an id that does not exist.                        | —                   |
 | `INVALID_DIMENSION`     | 422    | Create or approve finds no `balances` row for `(employee, location, leaveType)`.                       | —                   |
 | `INSUFFICIENT_BALANCE`  | 409    | Create check or approve re-check fails against the overlay projection.                                 | —                   |
-| `INVALID_TRANSITION`    | 409    | Approve (or a future reject / cancel) targets a request whose status is not the expected source state. | `currentStatus`     |
+| `INVALID_TRANSITION`    | 409    | Approve / reject / cancel targets a request whose status is not the expected source state.             | `currentStatus`     |
+| `BALANCE_NOT_FOUND`     | 404    | GET /balance finds no `balances` row for the queried dimension.                                        | —                   |
 | (HCM permanent)         | —      | HCM returns 4xx; surfaced in the response body's `hcmSyncStatus = 'failed'`, not as an HTTP error.     | —                   |
 | (HCM transient)         | —      | HCM 5xx / timeout / bad shape; surfaced as `hcmSyncStatus = 'pending'`, outbox `failed_retryable`.     | —                   |
 
@@ -757,6 +758,37 @@ Entry template:
 >   placeholder `approvedNotYetPushedDays = 0` is replaced with the
 >   real query in both the approve use case and — when the next
 >   slice lands — the create use case.
+
+---
+
+> **2026-04-24 — GET /balance returns the full overlay breakdown**
+> - **Decision:** `GET /balance?employeeId=X&locationId=Y&leaveType=Z`
+>   responds with `{ employeeId, locationId, leaveType, hcmBalance,
+>   pendingDays, approvedNotYetPushedDays, availableDays }` — all
+>   four numeric fields, not just the computed `availableDays`.
+> - **Reason:** §3.4 defines the balance projection as three
+>   components (`hcmBalance − pending − approvedNotYetPushed`). A
+>   single opaque `available` number prevents an Employee UI from
+>   explaining why the effective balance is lower than the HCM shows
+>   ("you have 3 days tied up on pending requests"), and prevents a
+>   client retrying after a `POST /requests` 409 from reconciling
+>   the server's view in a single round-trip — they would have to
+>   call multiple endpoints to reassemble the overlay. §12
+>   predictable response shapes and §3.4 transparency favour the
+>   breakdown.
+> - **Alternatives considered:**
+>   - *Single-number response `{ available: 5 }`.* Rejected: makes
+>     reconciliation require additional endpoints (a list-pending,
+>     a list-approved, or a per-dimension ledger GET) to reach the
+>     same client outcome.
+>   - *Full request-list response (embed pending / approved request
+>     ids).* Rejected: conflates a balance read with a request-list
+>     read; list/pagination on requests is explicitly deferred.
+> - **Impact:** `BalanceController` returns the four-field shape;
+>   `GetBalanceUseCase` builds it from the three existing repo sums
+>   + `availableBalance`; `BalanceNotFoundError` (404
+>   `BALANCE_NOT_FOUND`) is the single error path when the dimension
+>   row is absent.
 
 ## 10. Open questions
 

@@ -63,6 +63,21 @@ Invoke via `Agent(subagent_type=<name>)` when the task fits:
   inflation (§15).
 - Controllers stay thin; business logic lives in services/use-cases (§12).
 
+## Subagent discipline
+
+Every feature slice must exercise at least two subagents:
+
+- `architect` **before planning**. Its output (scope, flow, risks, ordered
+  TDD steps) is inlined or appended to the archived plan. Plans without an
+  architect briefing are incomplete (see `docs/process.md` plan template).
+- `reviewer` **before push**. Findings are triaged as *blocking* /
+  *should fix* / *nit* and either resolved or explicitly deferred in
+  `docs/devlog.md`.
+
+Other subagents (`domain-data`, `api-contract`, `sync-integration`,
+`test-qa`) are invoked when the slice touches their scope — as specialised
+review, not ceremony.
+
 ## Language
 
 All code, docs, comments, commit messages, and PR descriptions are written in

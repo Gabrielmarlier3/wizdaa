@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { HcmModule } from '../hcm/hcm.module';
 import { ApproveRequestUseCase } from './approve-request.use-case';
 import { CreateRequestUseCase } from './create-request.use-case';
+import { RejectRequestUseCase } from './reject-request.use-case';
 import { ApprovedDeductionsRepository } from './repositories/approved-deductions.repository';
 import { BalancesRepository } from './repositories/balances.repository';
 import { HcmOutboxRepository } from './repositories/hcm-outbox.repository';
@@ -15,6 +16,7 @@ import { TimeOffController } from './time-off.controller';
   providers: [
     CreateRequestUseCase,
     ApproveRequestUseCase,
+    RejectRequestUseCase,
     RequestsRepository,
     HoldsRepository,
     BalancesRepository,

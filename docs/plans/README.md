@@ -28,6 +28,10 @@ each step of the project. Alongside the TRD (decisions) and the code
   TRD open questions via independent architect analysis, plus the
   agentic-process deliverables (this archive, `docs/process.md`,
   `docs/devlog.md`).
+- `004-trd-completion-scaffolding-and-first-slice.md` — completion of
+  TRD §2 and §8, NestJS + Drizzle scaffolding, and the first TDD
+  slice (`POST /requests` with happy path, idempotency, and
+  insufficient balance).
 
 ## Relationship to `TRD.md`
 

@@ -56,6 +56,14 @@ export class HoldsRepository {
    * currently being approved. Without the exclusion, the approve
    * use case's balance re-check would double-count the requested
    * days (see plan 005 Appendix A §2 step 3).
+   *
+   * Relies on the lifecycle invariant that every row in `holds`
+   * belongs to a request whose status is `pending` — holds are
+   * created atomically with a pending request and deleted atomically
+   * with any terminal transition (approve, reject, cancel). If a
+   * future slice ever introduces a state that retains a hold (e.g.
+   * a "pending second approver" style), this query must inner-join
+   * `requests` and filter by status to avoid over-counting (§8.4).
    */
   sumActiveHoldDaysForDimensionExcludingRequest(
     employeeId: string,

@@ -214,4 +214,43 @@ describe('POST /requests/:id/approve', () => {
       .all();
     expect(holdRows).toHaveLength(0);
   });
+
+  it('returns 409 INVALID_TRANSITION with the current status on idempotent replay', async () => {
+    seedBalance('emp-replay', 'loc-BR', 'PTO', 10);
+    const pending = await createPendingRequest({
+      employeeId: 'emp-replay',
+      clientRequestId: 'client-replay-01',
+    });
+
+    const first = await request(ctx.app.getHttpServer())
+      .post(`/requests/${pending.id}/approve`)
+      .send();
+    expect(first.status).toBe(200);
+    expect(first.body.hcmSyncStatus).toBe('synced');
+
+    const second = await request(ctx.app.getHttpServer())
+      .post(`/requests/${pending.id}/approve`)
+      .send();
+
+    expect(second.status).toBe(409);
+    expect(second.body).toMatchObject({
+      code: 'INVALID_TRANSITION',
+      currentStatus: 'approved',
+    });
+
+    // No second outbox row and no second HCM call — the replay
+    // short-circuits before even reaching the transaction's
+    // state-changing writes.
+    const outboxRows = ctx.db
+      .select()
+      .from(hcmOutbox)
+      .where(eq(hcmOutbox.requestId, pending.id))
+      .all();
+    expect(outboxRows).toHaveLength(1);
+
+    const mockState = await (
+      await fetch(`${process.env.HCM_MOCK_URL}/test/state`)
+    ).json();
+    expect(mockState.mutations).toHaveLength(1);
+  });
 });

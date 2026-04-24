@@ -35,15 +35,4 @@ export class BalancesRepository {
       .get();
     return row;
   }
-
-  upsert(row: BalanceRow, executor: Db = this.db): void {
-    executor
-      .insert(balances)
-      .values(row)
-      .onConflictDoUpdate({
-        target: [balances.employeeId, balances.locationId, balances.leaveType],
-        set: { hcmBalance: row.hcmBalance, updatedAt: row.updatedAt },
-      })
-      .run();
-  }
 }

@@ -2,8 +2,8 @@ import {
   Body,
   ConflictException,
   Controller,
-  NotFoundException,
   Post,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import {
   CreateRequestUseCase,
@@ -29,7 +29,7 @@ export class TimeOffController {
         });
       }
       if (err instanceof InvalidDimensionError) {
-        throw new NotFoundException({
+        throw new UnprocessableEntityException({
           code: 'INVALID_DIMENSION',
           message: err.message,
         });

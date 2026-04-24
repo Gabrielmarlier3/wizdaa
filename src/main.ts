@@ -11,6 +11,9 @@ async function bootstrap(): Promise<void> {
       transform: true,
     }),
   );
+  // Required for @OnApplicationShutdown hooks (e.g. DatabaseModule
+  // closing the SQLite client) to fire on SIGTERM / SIGINT.
+  app.enableShutdownHooks();
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port);
 }

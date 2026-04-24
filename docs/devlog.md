@@ -89,7 +89,8 @@ slice through a red-green-refactor loop:
 2. Schema + migration landed the three tables (`balances`, `requests`,
    `holds`).
 3. Domain layer (pure functions: `createPendingRequest`, balance
-   projection) landed with 100% unit coverage.
+   projection) landed with unit specs covering the happy path,
+   domain rejections, and the exact-boundary projection cases.
 4. Repositories and `CreateRequestUseCase` wired the transactional
    hold creation via `db.transaction(() => ...)` — synchronous by
    construction per the Drizzle-over-better-sqlite3 decision.

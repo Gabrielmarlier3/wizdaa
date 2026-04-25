@@ -832,3 +832,66 @@ deliberately deferred with the same rationale already on file.
 
 Commits: `46669b4`, `0ab95ba`, `b1ef697`. No plan archive
 (audit-driven cleanup).
+
+## 2026-04-25 — Session 15: submission packaging
+
+Two small commits in service of the upload, no behavioural
+changes to the implementation.
+
+**TRD refinement pass (`d395f0a`).** Targeted edits across the
+TRD to make it read as a final external design document rather
+than a mid-construction artefact. Four issue groups: (1) one
+canonical rule for inconsistency resolution (auto-clear on next
+clean batch, no manual-resolve endpoint), with §3.5 and the
+*Batch sync preserves local holds; conflicts halt approvals*
+decision rewritten to point at the authoritative §9 entry; (2)
+removal of process-heavy wording — direct citations of plan
+005 / plan 009 / plan 010, "slice", "future slice", "architect
+subagent surfaced this concern", "TRD §5 paragraph rewritten to
+match the now-implemented worker"; (3) `leaveType` reframed
+conservatively — base grain stays per-employee per-location as
+the brief states, the column is a single-default-value storage
+extensibility hook with zero observable effect when the real
+HCM does not distinguish leave categories; (4) stale work-in-
+progress wording rewritten in final-state tense (§4 fences,
+§5 intro, §9 *Approved deductions* / *Outbox worker* impact
+bullets). Architecture unchanged. Decision log preserved with
+all 14 entries intact.
+
+**Stale `test/integration/README.md` removed (`109fa23`).** The
+file claimed no integration suites existed yet — but eight
+have been there since plan 010. A reviewer reading that README
+side-by-side with the directory listing would have detected the
+contradiction immediately. Removed rather than rewritten:
+`docs/coverage.md` already inventories the integration tier.
+
+**Submission decisions logged here so they survive after the
+zip ships:**
+
+- `.claude/` (subagent definitions, slash commands,
+  `settings.json` with the safe-command allowlist) is kept in
+  the zip. The brief explicitly invites visibility into the
+  AI workflow, the README links to `.claude/agents/` as
+  evidence of the agentic-process discipline, and the
+  directory carries no secrets — only ~3 KB of operational
+  config. Trimming would buy nothing and would break the
+  README narrative.
+- TypeScript stays. The Google Form submission checklist
+  explicitly permits *"JavaScript (or a derivative like
+  TypeScript)"*, which supersedes the email's earlier strict
+  wording. A port to plain JS would compromise either the
+  test suite's rigor or the NestJS DI guarantees, with no
+  reviewer benefit.
+- The submission zip is produced by
+  `git archive --format=zip HEAD -o /tmp/wizdaa-submission.zip`.
+  By construction this includes only tracked files —
+  `node_modules/`, `dist/`, `coverage/`, `coverage-e2e/`,
+  `notes/`, `.git/` are all absent. Size at HEAD: ~307 KB,
+  comfortably under the 50 MB limit.
+
+Phase B (pre-zip verification), Phase C (push + archive), and
+Phase D (fresh-extract reviewer simulation) follow these
+commits.
+
+Commits: `d395f0a`, `109fa23`. No plan archive
+(packaging-driven cleanup).

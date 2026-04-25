@@ -133,4 +133,24 @@ describe('HcmOutboxRepository terminal-state guards', () => {
     expect(row?.status).toBe('failed_permanent');
     expect(row?.lastError).toBe('HCM 409 seeded');
   });
+
+  it('leaves a failed_permanent row untouched when markSynced races to write', () => {
+    // Closes the symmetric-guard gap surfaced by the project-wide
+    // audit: markSynced previously wrote unconditionally and
+    // would have overwritten a permanent failure with a synced
+    // outcome — masking a 4xx HCM rejection.
+    const { outboxId } = seedTerminalOutboxRow('failed_permanent');
+
+    repo.markSynced(outboxId, 'late-arriving-mut-id', new Date().toISOString());
+
+    const row = ctx.db
+      .select()
+      .from(hcmOutbox)
+      .where(eq(hcmOutbox.id, outboxId))
+      .get();
+    expect(row?.status).toBe('failed_permanent');
+    expect(row?.lastError).toBe('HCM 409 seeded');
+    expect(row?.hcmMutationId).toBeNull();
+    expect(row?.syncedAt).toBeNull();
+  });
 });

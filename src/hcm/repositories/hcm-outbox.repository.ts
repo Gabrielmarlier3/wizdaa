@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, lte, notInArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, lte, ne, notInArray, sql } from 'drizzle-orm';
 import { DATABASE } from '../../database/database.module';
 import { Db } from '../../database/connection';
 import { hcmOutbox, HcmOutboxStatus } from '../../database/schema';
@@ -88,6 +88,16 @@ export class HcmOutboxRepository {
       .all();
   }
 
+  /**
+   * Symmetric terminal guard: a `synced` write must not overwrite
+   * a `failed_permanent` row that a concurrent writer landed
+   * first. The opposite direction (failed_permanent → synced) is
+   * the more dangerous one — it would mask a 4xx HCM rejection
+   * and re-issue a mutation HCM already refused — but the
+   * invariant is the same shape as the guards on the failed_*
+   * mark methods below, so `markSynced` carries the parallel
+   * `WHERE status != 'failed_permanent'` clause too.
+   */
   markSynced(
     id: string,
     hcmMutationId: string,
@@ -97,7 +107,9 @@ export class HcmOutboxRepository {
     executor
       .update(hcmOutbox)
       .set({ status: 'synced', hcmMutationId, syncedAt })
-      .where(eq(hcmOutbox.id, id))
+      .where(
+        and(eq(hcmOutbox.id, id), ne(hcmOutbox.status, 'failed_permanent')),
+      )
       .run();
   }
 

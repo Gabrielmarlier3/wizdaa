@@ -20,9 +20,14 @@ refreshes, direct HR edits.
 - **Manager** — approves or rejects requests, relying on the balance
   being valid at the moment of decision.
 
-**Balance scope.** Per-employee per-location. A given employee can have
-distinct balances across locations; additional dimensions are
-addressed in §3 and §10.
+**Balance scope.** Per-employee per-location, as stated by the
+brief. The data model and the API both honour that grain. The
+schema additionally carries an internal `leaveType` column whose
+default value is `PTO`; with an HCM that does not distinguish
+leave categories the column carries that one constant value and
+has no observable effect on the API or the projections (see §3.6
+and §9 decision *Balance dimension includes leaveType (default
+PTO)*).
 
 **HCM sync surfaces.**
 - **Realtime API** — query or mutate a single
@@ -170,8 +175,13 @@ thing to update if the real HCM diverges.
   `Idempotency-Key`.
 - **Batch conflicts with local state.** If the new HCM value would
   make `hcmBalance − approvedNotYetPushed` negative for a dimension,
-  the record is flagged as an `inconsistency` and further approvals on
-  that dimension are halted until manual resolution.
+  the record is flagged in an `inconsistencies` row and further
+  approvals on that dimension are halted. The flag clears
+  automatically the next time HCM sends a batch under which the
+  predicate no longer fires for that dimension; the service does
+  not expose a manual-resolve endpoint (see §9 decision *HCM batch
+  intake replaces full corpus; inconsistencies auto-clear on next
+  clean batch*).
 - **HCM accepts what we would reject** (or vice versa). Our local
   validation is authoritative. We never forward a mutation we believe
   to be invalid (§8.3 defense rule).
@@ -184,13 +194,16 @@ thing to update if the real HCM diverges.
   `rejected`, `cancelled`), local pending reservations, the idempotent
   outbox, and the mapping between local requests and HCM mutations.
 
-> **Interpretation note.** The brief states *"assume balances are
-> per-employee per-location"*. This service reads that statement as
-> defining the *grain* of a balance record, not prohibiting other
-> attributes. `leaveType` is added as a balance-record attribute
-> (default `PTO`) to keep the batch payload's *"necessary dimensions"*
-> hook extensible without speculation. See §9 decision *"Balance
-> dimension includes leaveType"*.
+> **Interpretation note.** The base balance grain is per-employee
+> per-location, as the brief states. The schema additionally
+> carries a `leaveType` column with a default value of `PTO` so
+> the storage layer can absorb the batch payload's *"with
+> necessary dimensions"* hook without changing the public shape
+> of the API. With an HCM that never distinguishes leave
+> categories, the column carries that one constant value and the
+> service behaves identically to a strict per-employee
+> per-location store. See §9 decision *"Balance dimension
+> includes leaveType (default PTO)"* for the full rationale.
 
 ### 3.7 Time and timezone
 
@@ -253,12 +266,15 @@ updates to `balances`.
 
 **Request state machine.** Four-state DAG, strictly one transition
 away from `pending`:
-`pending → approved | rejected | cancelled`. Non-`pending` states are
-terminal for this service's lifecycle (see §9 *Cancellation is a
-distinct terminal state from rejection*). Two status-guarded UPDATEs
-act as concurrency fences: `WHERE status='pending'` on approve
-(implemented — see §9 *Approval commits locally; HCM push via
-outbox*); the equivalent on reject / cancel lands with those slices.
+`pending → approved | rejected | cancelled`. Non-`pending` states
+are terminal for this service's lifecycle (see §9 *Cancellation
+is a distinct terminal state from rejection*). Each transition
+uses a status-guarded UPDATE
+(`UPDATE requests SET status=? WHERE id=? AND status='pending'`)
+as the concurrency fence; a zero-rows-changed result is the
+signal that another writer committed first and surfaces to the
+client as `INVALID_TRANSITION` with the actual `currentStatus`
+extra (§7).
 
 **Ledger overlay story.** The balance visible to the Employee is
 `hcmBalance − pendingHolds − approvedNotYetPushedDeductions`. Holds
@@ -281,8 +297,8 @@ out of the sum without requiring a cleanup job.
   application never deletes request rows in production.
 - `hcm_outbox.idempotency_key` UNIQUE — §9 *Dual idempotency*,
   service scope.
-- `hcm_outbox` composite index on `(status, next_attempt_at)` for a
-  future worker's polling query.
+- `hcm_outbox` composite index on `(status, next_attempt_at)`
+  serves the outbox worker's polling query.
 
 **Timestamps.** Every `created_at` / `updated_at` / `next_attempt_at`
 / `synced_at` is stored as a text ISO-8601 string in UTC, per §9
@@ -290,8 +306,11 @@ out of the sum without requiring a cleanup job.
 
 ## 5. HCM integration strategy
 
-Realised in the approve slice; extended in future slices as batch
-intake and rejection land.
+The integration runs in two directions: outbound mutations from
+this service to HCM (driven by the approval flow) and the
+inbound full-corpus batch HCM pushes back. Outbound calls are
+encapsulated in a single client class; inbound calls land on a
+single ingress controller.
 
 **Realtime (this service → HCM).** All mutations flow through the
 single `HcmClient` module. The client wraps `fetch` with:
@@ -301,7 +320,7 @@ single `HcmClient` module. The client wraps `fetch` with:
 - The `Idempotency-Key` header carrying a service-generated UUID
   unique to the *mutation intent* (§9 *Dual idempotency*, service
   scope). Retries — whether from the approve call's inline push or
-  the deferred outbox worker — reuse the same key.
+  the outbox worker — reuse the same key.
 - A discriminated-union return type that folds every HTTP and
   transport outcome into three outbox branches:
   - `ok` → outbox `synced`, request `hcm_sync_status = 'synced'`.
@@ -367,13 +386,12 @@ use `UPDATE requests SET status=? WHERE id=? AND status='pending'`
 as the primary fence and read zero-rows-changed as the signal
 that another writer committed first. A secondary fence on
 `UNIQUE(hcm_outbox.request_id)` catches the rare case where the
-primary fence races at the SQL layer (plan 005 Appendix A R1).
+primary fence races at the SQL layer.
 
 **Outbox resolution.** The worker's resolution write and a late
 inline push completing on the same outbox row both guard with
-`WHERE status NOT IN ('synced', 'failed_permanent')` so a late
-writer cannot downgrade a terminal state (plan 009 reviewer R5
-extended in plan 009 Phase B).
+`WHERE status NOT IN ('synced', 'failed_permanent')`, so a late
+writer cannot walk a terminal state backward.
 
 **Batch intake vs approve, same dimension.** Two orderings,
 neither loses data:
@@ -432,9 +450,10 @@ reports what the service learned about HCM.
 
 **`INVALID_TRANSITION` envelope extras.** Unlike the other 409, the
 `INVALID_TRANSITION` body carries `currentStatus` so a client
-retrying after a network timeout can reconcile (R4 in plan 005
-Appendix A). This is the precedent for any future 409 that wants to
-inform an idempotent retry of the current state.
+retrying after a network timeout can reconcile its view of the
+state machine in a single round-trip. This is the precedent for
+any future 409 that wants to inform an idempotent retry of the
+current state.
 
 ## 8. Testing strategy
 
@@ -593,8 +612,12 @@ Entry template:
 >   approved-not-yet-pushed deductions are **preserved as overlays**
 >   on top of the new HCM value. If the new HCM value would make
 >   `hcmBalance − approvedNotYetPushed` negative, the affected
->   dimension is flagged as an `inconsistency` event and further
->   approvals on that dimension are halted until resolved.
+>   dimension is flagged in an `inconsistencies` row and further
+>   approvals on that dimension are halted. The flag is current
+>   state, not an event log: the mechanics of the halt and the
+>   auto-clear policy on the next clean batch are pinned in the
+>   later decision *HCM batch intake replaces full corpus;
+>   inconsistencies auto-clear on next clean batch*.
 > - **Reason:** CHALLENGE.md names HCM as source of truth, so the raw
 >   value must win on reads (§8.5). §8.3 prohibits blind trust; a pure
 >   "HCM overwrites everything" policy would erase a just-approved-
@@ -610,7 +633,7 @@ Entry template:
 >   - *Last-write-wins by timestamp.* Rejected: requires trustworthy
 >     clocks on both sides and silently loses data either way.
 > - **Impact:** touches the batch ingestion use case, balance
->   projection logic, an `inconsistencies` table/endpoint, and tests
+>   projection logic, the `inconsistencies` table, and tests
 >   covering batch-during-pending, batch-during-approval-push, and
 >   batch-reducing-below-approved.
 
@@ -647,28 +670,41 @@ Entry template:
 ---
 
 > **2026-04-24 — Balance dimension includes leaveType (default PTO)**
-> - **Decision:** balance is keyed by
->   `(employeeId, locationId, leaveType)` with `leaveType` as an
->   enumerated field. Initial single value: `PTO`. The brief's
->   *"per-employee per-location"* statement is read as defining the
->   *grain* of a balance record, not prohibiting other attributes.
-> - **Reason:** the brief names vacation/sick as plausible distinctions
->   (*"10 days of leave"*) and uses *"with necessary dimensions"* for
->   the batch payload, signaling the dimension set is not frozen.
->   §8.7 (non-invention) is honored because the evidence is in the
->   brief; §8.1 (scope) is honored because no further dimension is
->   added beyond type. Adding the column later would migrate every
->   balance query — regret cost later is larger than marginal cost now.
+> - **Decision:** the public balance grain remains per-employee
+>   per-location, as the brief states. The schema additionally
+>   carries a single `leaveType` column with a constant default
+>   value (`PTO`). With one default value the column is not
+>   exposed as a meaningful axis to clients — the API and the
+>   projections behave identically to a strict per-employee
+>   per-location store.
+> - **Reason:** the brief leaves the storage-side dimension set
+>   explicitly open at the batch payload (*"with necessary
+>   dimensions"*), and mentions *"10 days of leave"* without
+>   committing to a single leave category. The conservative
+>   reading is therefore: keep the public contract at
+>   per-employee per-location and absorb the storage extensibility
+>   hook as a single defaulted column rather than as a public API
+>   feature. If the real HCM ever reports more than one leave
+>   type, the column already exists; if it never does, nothing
+>   observable changes. §8.7 (non-invention) is satisfied because
+>   the column adds no dimension beyond what the batch payload
+>   already carries; §8.1 (scope) is satisfied because no further
+>   dimension is introduced beyond `leaveType`.
 > - **Alternatives considered:**
->   - *Employee + location only.* Rejected: real HCMs universally
->     separate leave categories; later addition would migrate every
->     balance query and every request DTO.
->   - *Full policy model with accrual windows.* Rejected outright under
->     §10 and §8.7 — no evidence this is needed.
-> - **Impact:** balance primary key; all balance repository methods;
->   batch ingestion mapping; request DTO must specify type; balance
->   invariant tests. If the real HCM has no type distinction, the
->   column collapses to a single value with zero behavioral impact.
+>   - *Strict employee + location storage with no `leaveType`
+>     column.* Rejected because retrofitting the column later, if
+>     a real HCM ever distinguishes leave categories, would have
+>     to migrate the primary key and every balance query — a
+>     significant change after the fact, versus zero cost
+>     up-front when the column carries one default value.
+>   - *Full policy model with accrual windows, types, and
+>     entitlements.* Rejected outright: no evidence in the brief
+>     that any of this is required (§8.7).
+> - **Impact:** balance primary key includes the column; balance
+>   repository methods accept the value; batch ingestion maps it;
+>   request DTOs default it. Under a single value the API surface
+>   and the projection math are indistinguishable from the strict
+>   per-employee per-location model.
 
 ---
 
@@ -709,9 +745,7 @@ Entry template:
 >   actors (Employee vs Manager) and carry different audit semantics;
 >   collapsing them would lose information. §8.4 requires atomic
 >   release of the held balance to prevent stale reservations on
->   abandoned requests. The architect subagent surfaced this concern
->   during the open-questions analysis even though it was not in the
->   original §10.
+>   abandoned requests.
 > - **Alternatives considered:**
 >   - *Single `terminated` state parameterized by an initiator field.*
 >     Rejected: weakens compile-time guarantees by replacing a type
@@ -784,13 +818,12 @@ Entry template:
 >     Rejected because it trades TypeScript types on query results
 >     and automated migration tooling for no real architectural win —
 >     Drizzle stays equally close to SQL while giving both.
-> - **Impact:** `src/database/schema.ts` is the authoritative schema;
->   every feature slice extends it and regenerates migrations before
->   commit. `DatabaseModule` exposes a Drizzle `Db` instance via the
->   `DATABASE` token; services depend on repo interfaces that hide
->   the Drizzle API so domain code stays framework-free. Integration
->   and e2e tests build their DB from the same migration runner used
->   at startup.
+> - **Impact:** `src/database/schema.ts` is the authoritative schema
+>   and the source of generated migrations. `DatabaseModule`
+>   exposes a Drizzle `Db` instance via the `DATABASE` token;
+>   services depend on repo interfaces that hide the Drizzle API
+>   so domain code stays framework-free. Integration and e2e tests
+>   build their DB from the same migration runner used at startup.
 
 ---
 
@@ -820,12 +853,11 @@ Entry template:
 >     two-joined sums on every projection read is wasteful, and
 >     §14's "coherent constraints" guidance favours explicit overlay
 >     tables that the schema can constrain by itself.
-> - **Impact:** adds `ApprovedDeductionsRepository` with `insert`
->   and `sumNotYetPushedDaysForDimension`. Balance projection in
->   `ApproveRequestUseCase` reads the sum; create-request slice's
->   placeholder `approvedNotYetPushedDays = 0` is replaced with the
->   real query in both the approve use case and — when the next
->   slice lands — the create use case.
+> - **Impact:** `ApprovedDeductionsRepository` exposes `insert` and
+>   `sumNotYetPushedDaysForDimension`. Both `CreateRequestUseCase`
+>   and `ApproveRequestUseCase` read this sum when computing the
+>   overlay, so a request whose prior approval has not yet synced
+>   correctly blocks subsequent creations on the same dimension.
 
 ---
 
@@ -872,8 +904,8 @@ Entry template:
 >   flips to `'failed'`. The interval auto-starts via `onModuleInit`
 >   unless `NODE_ENV === 'test'`, so tests drive `tick()` manually
 >   via `app.get(HcmOutboxWorker)`.
-> - **Reason:** §10 open question 8 tracked the gap — the inline
->   push only attempts once, so a single transient HCM outage left
+> - **Reason:** the inline push only attempts once. Without a
+>   retry loop, a single transient HCM outage would leave
 >   `failed_retryable` rows stranded and the overlay projection
 >   permanently under-counting. A five-line `setInterval` wired in
 >   a Nest lifecycle hook closes the loop without adding a scheduler
@@ -900,22 +932,19 @@ Entry template:
 >     permanent promotion is the stopping mechanism §10 already
 >     endorses.
 >   - *Removing the inline push and relying on the worker alone.*
->     Rejected for this slice: removing the inline push would shift
->     the approve response's observable `hcmSyncStatus` from
->     immediate `'synced'` (happy path) to poll-interval-delayed
->     `'synced'` — a user-visible UX change that deserves its own
->     scoped decision, not a silent consequence of landing a retry
->     loop.
-> - **Impact:** adds `HcmOutboxWorker` under `src/hcm/` and a
->   `claimDueBatch(limit, now)` query on `HcmOutboxRepository`.
->   `markFailedRetryable` and `markFailedPermanent` grow a
->   `WHERE status != 'synced'` guard so a slow inline push
->   completing after a worker tick cannot overwrite the terminal
->   outcome. The e2e config serialises worker to `maxWorkers: 1`
->   because the mock HCM's scenario state is now flipped more
->   aggressively than parallel workers can safely share. TRD §5
->   *Outbox* paragraph rewritten to match the now-implemented
->   worker.
+>     Rejected: removing the inline push would shift the approve
+>     response's observable `hcmSyncStatus` from immediate
+>     `'synced'` (happy path) to poll-interval-delayed `'synced'`
+>     — a user-visible UX change that would deserve its own
+>     decision, not a silent consequence of the retry loop.
+> - **Impact:** `HcmOutboxWorker` lives under `src/hcm/` and
+>   exposes `tick()` for tests; `HcmOutboxRepository` carries a
+>   `claimDueBatch(limit, now)` query plus `WHERE status NOT IN
+>   ('synced', 'failed_permanent')` guards on the mark methods so
+>   a slow inline push completing after a worker tick cannot walk
+>   a terminal state backward. The e2e Jest configuration runs
+>   with `maxWorkers: 1` because the mock HCM's scenario state is
+>   shared across parallel Jest workers.
 
 ---
 
@@ -934,10 +963,11 @@ Entry template:
 >   present.
 > - **Reason:** TRD §3.3 specifies the full-corpus contract; §3.5
 >   commits the service to halting approvals on the affected
->   dimension until resolved. A current-state flag table with
->   auto-clear is the minimum shape that satisfies both: the flag
->   is the resolution lever, and "resolved" is what HCM signals by
->   sending a clean batch. A manual-resolve endpoint
+>   dimension. A current-state flag table with auto-clear is the
+>   minimum shape that satisfies both: the flag is the halt
+>   surface, and the next batch under which the predicate no
+>   longer fires is the authoritative "resolved" signal. A
+>   manual-resolve endpoint
 >   (`POST /inconsistencies/:dimension/resolve`) would duplicate
 >   the signal HCM already sends and add read-surface columns
 >   (`resolvedBy`, `resolvedAt`) that §10 (no speculative
@@ -948,12 +978,12 @@ Entry template:
 >   reject/cancel, so including them would false-positive whenever
 >   many pendings are open.
 > - **Alternatives considered:**
->   - *Manual-resolve only (operator must acknowledge).* Rejected
->     in the plan 010 scope-picking question: the TRD treats HCM as
->     source of truth, and a batch that no longer triggers the
->     predicate IS the authoritative "resolved" signal. Forcing a
->     human acknowledgement every time HCM itself corrects the
->     balance is friction without a safety gain at this scope.
+>   - *Manual-resolve only (operator must acknowledge).* Rejected:
+>     the TRD treats HCM as the source of truth, and a batch that
+>     no longer triggers the predicate IS the authoritative
+>     "resolved" signal. Forcing a human acknowledgement every
+>     time HCM itself corrects the balance is friction without a
+>     safety gain.
 >   - *Include pending holds in the predicate
 >     (`hcmBalance − pending − approvedNotYetPushed < 0`).*
 >     Rejected: the §3.5 text names the narrower predicate, and
@@ -1004,15 +1034,13 @@ navigable.
 9. **`inconsistency`-flagged dimension interaction with pending approvals.**
    → §9 *HCM batch intake replaces full corpus; inconsistencies auto-clear on next clean batch*.
 
-### Surfaced during the approve slice (plan 005)
+### Open
 
 10. **Inline push timeout budget.** 2s default (`HCM_TIMEOUT_MS`
     env override). Assumption, not load-tested. Too-short loses
     legitimate slow responses; too-long worsens approval-latency
     P95. Revisit when a real HCM contract or concrete timings
     surface.
-
-### Surfaced during the batch intake slice (plan 010)
 
 11. **Stranded pending requests on deleted dimensions.** The
     batch intake's full-corpus replacement deletes any `balances`
@@ -1023,7 +1051,6 @@ navigable.
     surfaces `INVALID_DIMENSION` because no balance row exists.
     But the request itself stays `pending` indefinitely until
     manually rejected or cancelled — there is no operator tooling
-    to surface or sweep such rows today. Defer to a dedicated
-    operator-tooling slice once a real workflow materialises;
-    §8.7 (no invention) says wait for the concrete need before
-    designing the cleanup.
+    to surface or sweep such rows today. Deferred until a
+    concrete operator workflow materialises; §8.7 (no invention)
+    says wait for the concrete need before designing the cleanup.

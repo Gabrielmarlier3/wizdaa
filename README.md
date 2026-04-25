@@ -275,9 +275,10 @@ npx eslint "{src,test,scripts}/**/*.ts"
 
 ### Critical scenarios (INSTRUCTIONS.md §15)
 
-Every scenario §15 names is exercised by at least one spec. This
-table is the link from the brief's checklist into the code so a
-reviewer can audit each rule directly.
+Every scenario §15 names is exercised by at least one spec. The
+table below maps each rule to the spec file that protects it, so
+a maintainer adding behaviour or refactoring can find — and
+update — the relevant test in one hop.
 
 | §15 scenario                                       | Covered by |
 | -------------------------------------------------- | ---------- |
@@ -367,10 +368,9 @@ Artefacts:
 
 ## Security considerations
 
-The submission email lists *"Security considerations and
-architectural decisions"* among the evaluation criteria. The notes
-below cover the explicit decisions; the corresponding TRD §9
-entries hold the longer rationale.
+Security-relevant design decisions in this service. The
+corresponding TRD §9 entries hold the longer rationale; this
+section is a fast-reference for anyone touching the code.
 
 ### Defensive HCM integration (TRD §8.3 / §9 *Approval commits locally; HCM push via outbox*)
 
@@ -410,27 +410,52 @@ entries hold the longer rationale.
   `src/database/schema.ts`, which is authored at build time and
   never accepts runtime data — there is no path by which a
   client-supplied string could land in an identifier position.
-- Runtime dependencies (`drizzle-orm`, `better-sqlite3`,
+- Runtime dependencies (`drizzle-orm` `^0.45.2`, `better-sqlite3`,
   `class-validator`, NestJS) carry no known security advisories
-  at the pinned versions.
-- `drizzle-kit` (a build-time-only CLI used for migration
-  generation) inherits an `esbuild` dev-server CORS-bypass
-  advisory. It is unreachable at runtime because the dev server
-  in question never runs in this project — `drizzle-kit` is only
-  invoked as a one-shot CLI to emit migration SQL files.
+  at the pinned versions. Verifiable via:
+
+  ```bash
+  npm audit --omit=dev
+  ```
+
+  which audits only the packages that ship with a production
+  install. Expected output: `found 0 vulnerabilities`.
+
+- `npm audit` (default, including dev dependencies) reports
+  **four moderate findings**, all of which trace back to a
+  single root: `esbuild ≤ 0.24.2` carries advisory
+  [`GHSA-67mh-4wv8-2f99`](https://github.com/advisories/GHSA-67mh-4wv8-2f99)
+  (esbuild's `--serve` development server allows cross-origin
+  reads). esbuild reaches this project transitively through
+
+  ```
+  drizzle-kit
+    └── @esbuild-kit/esm-loader
+          └── @esbuild-kit/core-utils
+                └── esbuild
+  ```
+
+  so npm audit walks the chain and emits one finding per link —
+  one CVE counted four times. The exploit requires running
+  esbuild's dev-server; this project never starts it.
+  `drizzle-kit` is invoked only as a one-shot CLI
+  (`npm run db:generate`) that emits migration SQL files and
+  exits, and a production install (`npm install --omit=dev`)
+  excludes the entire chain. The advisory therefore has no
+  reachable surface in either the development workflow or the
+  shipped runtime.
 
 ### Out-of-scope
 
 - **Authentication / authorisation.** The service exposes no auth
-  surface. The brief does not require it; an externally-fronted
-  deployment would put authentication at an upstream layer (API
-  gateway, mTLS, BFF) before this service. TRD §10 records this
-  as an open boundary.
-- **Rate limiting.** Same reasoning — out of scope for the
-  microservice level; the upstream layer owns it.
+  surface. An externally-fronted deployment would put
+  authentication at an upstream layer (API gateway, mTLS, BFF)
+  before this service.
+- **Rate limiting.** Same reasoning — handled at the upstream
+  layer, not at the microservice itself.
 - **Secret management.** No secrets ship in the repository. Env
-  vars are documented in the env-var table; none are required at
-  runtime against the mock HCM.
+  vars are documented in the env-var table; none are required
+  at runtime against the mock HCM.
 
 ## Engineering principles
 

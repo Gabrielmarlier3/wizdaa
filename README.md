@@ -24,8 +24,15 @@ failures is the central engineering concern — not CRUD.
 
 ```bash
 npm install
+npm run db:migrate         # apply Drizzle migrations to ./wizdaa.db
 npm run start:dev          # Nest with file watch on http://localhost:3000
 ```
+
+`db:migrate` must run before the first `start:dev` (or `start` /
+`start:prod`). The schema is not auto-applied at boot — without
+this step, the server starts but the `HcmOutboxWorker` and every
+endpoint that touches the DB will fail with
+`no such table: …`.
 
 Environment variables (all optional):
 

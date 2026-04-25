@@ -7,11 +7,11 @@ deliverable: *"Your test cases and proof of coverage"*).
 
 | Field | Value |
 |---|---|
-| Git SHA | `6fbbf9c` (plan 011 reviewer fix B1 — create-request overlay enforcement) |
-| Generated | 2026-04-24 (UTC) |
+| Git SHA | `0ab95ba` (audit-fix-3 — mock forceTimeout dangling timer cleared) |
+| Generated | 2026-04-25 (UTC) |
 | Node | v24.14.0 |
 | Jest | 29.7.0 |
-| Plan | 011 — README + proof of coverage |
+| Plan | 011 + audit fixes |
 
 ## How to regenerate
 
@@ -40,7 +40,7 @@ the use cases through their public entry points without HTTP.
 ```
 File                                | % Stmts | % Branch | % Funcs | % Lines
 ------------------------------------|---------|----------|---------|--------
-All files                           |    82.6 |    36.84 |   82.07 |    81.5
+All files                           |   82.76 |    37.71 |   83.01 |   81.67
  balance                            |   87.17 |       50 |      80 |   85.71
   balance.controller.ts             |   64.28 |        0 |      50 |   58.33
   errors.ts                         |     100 |      100 |     100 |     100
@@ -58,13 +58,13 @@ All files                           |    82.6 |    36.84 |   82.07 |    81.5
   hcm-outbox-worker.ts              |   92.42 |    63.63 |   81.81 |   92.18
   hcm.client.ts                     |   58.62 |    11.11 |   66.66 |   57.69
  hcm/dto                            |    90.9 |      100 |       0 |    90.9
- hcm/repositories                   |   93.54 |       70 |   83.33 |    92.3
-  hcm-outbox.repository.ts          |   84.61 |       40 |   66.66 |   81.81
+ hcm/repositories                   |   96.77 |       80 |   91.66 |   96.15
+  hcm-outbox.repository.ts          |    92.3 |       60 |   83.33 |    90.9
   inconsistencies.repository.ts     |     100 |      100 |     100 |     100
  time-off                           |   70.61 |    21.27 |   76.66 |    69.2
-  approve-request.use-case.ts       |    75.9 |    33.33 |    87.5 |    75.3
+  approve-request.use-case.ts       |    75.6 |    33.33 |    87.5 |      75
   cancel-request.use-case.ts        |   80.76 |       25 |     100 |   79.16
-  create-request.use-case.ts        |    82.6 |     12.5 |   83.33 |   81.81
+  create-request.use-case.ts        |   80.48 |     12.5 |      75 |   79.48
   errors.ts                         |     100 |      100 |     100 |     100
   get-request.use-case.ts           |     100 |      100 |     100 |     100
   reject-request.use-case.ts        |   80.76 |       25 |     100 |   79.16
@@ -77,8 +77,8 @@ All files                           |    82.6 |    36.84 |   82.07 |    81.5
   requests.repository.ts            |   95.23 |    18.18 |   88.88 |   94.73
 ```
 
-**Summary:** 82.6 % statements / 36.84 % branches / 82.07 %
-functions / 81.5 % lines. 13 suites, 83 tests.
+**Summary:** 82.76 % statements / 37.71 % branches / 83.01 %
+functions / 81.67 % lines. 13 suites, 84 tests.
 
 ## End-to-end
 
@@ -110,10 +110,10 @@ All files                           |   89.26 |    47.36 |   90.56 |   88.65
   hcm-outbox.repository.ts          |     100 |       20 |     100 |     100
   inconsistencies.repository.ts     |   94.44 |       20 |     100 |   93.33
  time-off                           |   84.35 |    48.93 |      90 |    83.6
-  approve-request.use-case.ts       |   83.13 |    44.44 |    87.5 |   82.71
+  approve-request.use-case.ts       |   82.92 |    44.44 |    87.5 |    82.5
   cancel-request.use-case.ts        |   84.61 |       50 |     100 |   83.33
-  create-request.use-case.ts        |   80.43 |       25 |   66.66 |   79.54
-  errors.ts                         |     100 |      100 |     100 |     100
+  create-request.use-case.ts        |   82.92 |       25 |      75 |   82.05
+  errors.ts                         |   86.66 |      100 |      75 |   86.66
   get-request.use-case.ts           |     100 |      100 |     100 |     100
   reject-request.use-case.ts        |   84.61 |       50 |     100 |   83.33
   time-off.controller.ts            |    83.6 |    66.66 |     100 |   83.05
@@ -148,8 +148,8 @@ functions / 88.65 % lines. 11 suites, 42 tests.
   | `get-request.use-case.ts` | 100 % | Both runs. |
   | `balance.controller.ts` | 91.66 % | E2E. Integration runs do not hit controllers. |
   | `time-off.controller.ts` | 83.05 % | E2E. Uncovered lines are the create / reject / cancel error envelopes — covered by their dedicated e2e specs but not by the integration suite. |
-  | `approve-request.use-case.ts` | ~85 % (75.3 % unit ∪ 82.71 % e2e) | Uncovered lines are mostly the `isOutboxUniqueRequestIdViolation` secondary fence and the post-commit logger block — both defensive code paths whose triggering races SQLite's single-writer driver makes nearly impossible. |
-  | `create-request.use-case.ts` | ~82 % (81.81 % unit ∪ 79.54 % e2e) | Lines 136–145 are the cross-process UNIQUE-violation catch (the `findByClientRequestId` re-read after a concurrent insert). SQLite via `better-sqlite3` is single-writer, so the path is unreachable without deliberately injecting a UNIQUE failure — §15 forbids a test whose only purpose is reaching it. |
+  | `approve-request.use-case.ts` | ~85 % (75 % unit ∪ 82.5 % e2e) | Uncovered lines are mostly the `isOutboxUniqueRequestIdViolation` secondary fence and the post-commit logger block — both defensive code paths whose triggering races SQLite's single-writer driver makes nearly impossible. |
+  | `create-request.use-case.ts` | ~83 % (79.48 % unit ∪ 82.05 % e2e) | Lines 123–132 are the cross-process UNIQUE-violation catch (the `findByClientRequestId` re-read after a concurrent insert). SQLite via `better-sqlite3` is single-writer, so the path is unreachable without deliberately injecting a UNIQUE failure — §15 forbids a test whose only purpose is reaching it. |
   | `cancel-request.use-case.ts` / `reject-request.use-case.ts` | 79–83 % | Uncovered lines are the `if (changes !== 1)` fence's re-read when a concurrent writer commits first. Tested via `Promise.all` interleave for approve; reject and cancel inherit the pattern but the race window is closed by SQLite serialisation, so the `re-read` branch is a defensive backstop. |
   | `hcm-outbox.repository.ts` / `inconsistencies.repository.ts` | 93–100 % | Branch numbers are dragged down by the optional `executor: Db = this.db` default arg — Istanbul counts each as a branch and the unit suite usually passes an explicit `tx`. Tooling quirk, not a quality gap. |
   | `hcm-outbox-worker.ts` | ~92 % (92.18 % unit ∪ 82.81 % e2e) | Uncovered lines are the auto-start interval (`onModuleInit` lines 66–68) — disabled when `NODE_ENV === 'test'`, so the runtime path is not reachable from the test harness. |
@@ -177,17 +177,18 @@ functions / 88.65 % lines. 11 suites, 42 tests.
   payload).
 - **Integration** — `test/integration/*.spec.ts`, 8 files:
   approve / reject / cancel happy paths + concurrency,
-  create-request overlay enforcement (plan 011 fix B1),
-  inconsistencies-repository guards, hcm-outbox-repository
-  terminal-state guards, balances-repository batch writes,
-  batch-balance-intake use case (including ghost-sweep).
+  create-request overlay enforcement, inconsistencies-repository
+  guards, hcm-outbox-repository terminal-state guards (including
+  the markSynced symmetric guard added in audit-1),
+  balances-repository batch writes, batch-balance-intake use
+  case (including ghost-sweep).
 - **E2E** — `test/e2e/*.e2e-spec.ts`, 11 files: each HTTP
   endpoint's happy + error paths, the HCM mock contract, the
   outbox worker's full-loop recovery against real mock
   scenarios, the batch-intake halt + auto-clear user journey,
-  and the §15 forceTimeout coverage added in plan 011.
+  and the §15 forceTimeout coverage.
 
-Total: 125 tests green (83 unit/integration + 42 e2e).
+Total: **126 tests green** (84 unit/integration + 42 e2e).
 
 ## Change log
 
@@ -200,7 +201,15 @@ Total: 125 tests green (83 unit/integration + 42 e2e).
   replaced `create-request.use-case.ts`'s
   `approvedNotYetPushedDays = 0` placeholder with the real
   `sumNotYetPushedDaysForDimension` call. Integration count
-  81 → 83. Coverage tables refreshed; the previous report's
-  "≥ 83 % combined lines" claim was inaccurate for create
-  (78.57 % in both runs at that time) and is replaced by the
-  per-file table above.
+  81 → 83.
+- 2026-04-24 — `+1` integration test from project-wide audit
+  fix Audit-1: `markSynced` symmetric terminal guard. Total
+  84 unit/integration + 42 e2e = 126.
+- 2026-04-25 — Tables refreshed under SHA `0ab95ba` after the
+  FINAL_INSTRUCTION audit-defect fixes (tsconfig.build.json
+  pollution removed; mock HCM forceTimeout dangling timer
+  cleared). Test counts unchanged from the prior refresh
+  (audit-defect fixes touched build/test infrastructure but no
+  source paths). Per-file aggregate percentages drifted by < 1 %
+  on a handful of files; the per-file narrative above remains
+  accurate.

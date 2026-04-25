@@ -678,3 +678,89 @@ Commits: `2efb318`, `b3b8fc8`, `eebdcd6`, `f2d1a9d`, `f898e92`,
 `0cbbf82`, `d937973`, `19aa263` (Phase A); `6fbbf9c`, `ec54755`,
 `9295055` (Phase B). Plan archive:
 `docs/plans/011-readme-and-coverage-polish.md`.
+
+## 2026-04-24 — Session 13: project-wide audit + submission fixes
+
+After plan 011 wrapped, the user asked for one final pass with
+the `reviewer` subagent at *whole-project* scope (not the usual
+per-slice diff lens) before pushing for submission. The reviewer
+read CHALLENGE.md, INSTRUCTIONS.md, TRD.md, the README, the
+coverage artefact, and the docs/plans index, then audited every
+§15 scenario and §12 error category against the actual specs +
+controllers.
+
+**Verdict: ship with fixes.** No blockers. Three should-fix and
+four nits — applied four, deferred two.
+
+**Applied** (4 commits, no plan / no architect because each is a
+narrow targeted fix, not a slice):
+
+1. **Audit-1 (`f688660`).** `markSynced` was the only mark*
+   method without a terminal-state guard. The mirror risk
+   (`markFailedPermanent` overwriting `synced`) was already
+   covered; the worker-tick / permanent-failure race in the
+   other direction (synced overwriting failed_permanent) was
+   not. Added the parallel `WHERE status != 'failed_permanent'`
+   guard and a new integration spec pinning the invariant.
+2. **Audit-2 (`f08168b`).** `InvalidDimensionError` and
+   `InsufficientBalanceError` had been declared inside
+   `create-request.use-case.ts` and re-imported by the approve
+   use case + the controller — exactly the leaky-abstraction
+   shape `errors.ts` was created to prevent. Moved both classes
+   to `src/time-off/errors.ts` (the existing home for
+   module-shared errors) and updated four import sites. Pure
+   rewiring; no behavioural change.
+3. **Audit-3 (`2e94848`).** Comment on
+   `ApproveRequestUseCase.nextAttemptAt` referenced "a future
+   slice that adds the out-of-process worker" — but the worker
+   landed in plan 009. Replaced with a precise statement of the
+   deliberate inline-vs-worker schedule divergence (inline does
+   one 30s retry, worker takes over with exponential backoff)
+   and cross-referenced `BACKOFF_BASE_MS` as the single source
+   of truth for the first-retry delay.
+4. **Audit-4 (`80b70c3`).** Two nits bundled. (a) `express` was
+   transitive via `@nestjs/platform-express` but the mock HCM
+   imports it directly — added explicit `^5.0.0` devDependency
+   so a future major bump of platform-express cannot silently
+   drop the peer. (b) `migrate.ts`'s two `console.log` calls
+   gained `eslint-disable-next-line no-console` markers
+   matching the pattern already in `scripts/hcm-mock/server.ts`,
+   so `npm run lint` is clean. The lint run itself
+   auto-prettified seven previously-touched files (whitespace
+   only) — bundled rather than fought.
+
+**Deferred** (2 nits, with explicit reasons):
+
+- **N2 — `clientRequestId` `@IsUUID()` enforcement.** TRD §9
+  *Dual idempotency* refers to `clientRequestId` as a UUID; the
+  DTO accepts any non-empty string. Tightening to `@IsUUID()`
+  would break every existing test fixture that uses descriptive
+  client IDs (`client-approve-01`, `client-flow-halt`, …) — a
+  15-spec cascade to update test fixtures for a documentation-
+  parity nit. The current behaviour is correct for any unique
+  string; clients sending valid UUIDs get idempotency exactly as
+  the TRD describes; non-UUID strings still dedupe via the
+  UNIQUE constraint. Logged here so a future maintainer can
+  pick it up if the prescriptive form becomes load-bearing.
+- **N4 — `resolveSyncStatus` async / sync return type.** Pure
+  readability nit; the use-case wrapper is correctly `async`
+  for the `await hcmClient.postMutation`, and the inner
+  `resolveSyncStatus` could have been typed sync since
+  `db.transaction` on `better-sqlite3` is synchronous. Changing
+  it now would touch a hot path for no functional gain. The
+  reviewer explicitly flagged it as take-it-or-leave-it.
+
+86 unit/integration + 42 e2e tests green (128 total). README,
+TRD, coverage.md, and devlog all consistent. Theater-language
+audit still clean across every tracked `.md` / `.ts` / `.json`.
+
+**Submission readiness:** the project is ready to zip and ship.
+`git archive --format=zip HEAD` produces a 307 KB submission
+bundle (well under any plausible limit) containing the
+canonical artefact set: code, tests, drizzle migrations, mock
+HCM, TRD + INSTRUCTIONS + CLAUDE + README + coverage.md, the
+eleven archived plans, the chronological devlog through this
+entry, and the six subagent definitions under `.claude/agents/`.
+
+Commits: `f688660`, `f08168b`, `2e94848`, `80b70c3`. No plan
+archive (audit-driven cleanup, not a planned slice).

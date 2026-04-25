@@ -6,11 +6,9 @@ import {
   holds,
   requests,
 } from '../../src/database/schema';
-import {
-  CreateRequestUseCase,
-  InsufficientBalanceError,
-} from '../../src/time-off/create-request.use-case';
+import { CreateRequestUseCase } from '../../src/time-off/create-request.use-case';
 import { ApproveRequestUseCase } from '../../src/time-off/approve-request.use-case';
+import { InsufficientBalanceError } from '../../src/time-off/errors';
 import { buildTestApp, TestContext } from '../helpers/test-app';
 
 /**

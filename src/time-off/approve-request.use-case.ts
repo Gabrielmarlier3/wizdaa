@@ -12,10 +12,11 @@ import { hasSufficientBalance } from '../domain/balance';
 import { HcmClient } from '../hcm/hcm.client';
 import { InconsistenciesRepository } from '../hcm/repositories/inconsistencies.repository';
 import {
+  DimensionInconsistentError,
   InsufficientBalanceError,
   InvalidDimensionError,
-} from './create-request.use-case';
-import { DimensionInconsistentError, RequestNotFoundError } from './errors';
+  RequestNotFoundError,
+} from './errors';
 import { ApprovedDeductionsRepository } from './repositories/approved-deductions.repository';
 import { BalancesRepository } from './repositories/balances.repository';
 import { HcmOutboxRepository } from '../hcm/repositories/hcm-outbox.repository';

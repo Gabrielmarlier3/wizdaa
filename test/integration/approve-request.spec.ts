@@ -7,13 +7,13 @@ import {
   inconsistencies,
   requests,
 } from '../../src/database/schema';
+import { CreateRequestUseCase } from '../../src/time-off/create-request.use-case';
+import { ApproveRequestUseCase } from '../../src/time-off/approve-request.use-case';
 import {
-  CreateRequestUseCase,
+  DimensionInconsistentError,
   InsufficientBalanceError,
   InvalidDimensionError,
-} from '../../src/time-off/create-request.use-case';
-import { ApproveRequestUseCase } from '../../src/time-off/approve-request.use-case';
-import { DimensionInconsistentError } from '../../src/time-off/errors';
+} from '../../src/time-off/errors';
 import { buildTestApp, TestContext } from '../helpers/test-app';
 
 describe('ApproveRequestUseCase (integration)', () => {

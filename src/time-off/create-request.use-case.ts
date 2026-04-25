@@ -5,24 +5,11 @@ import { DATABASE } from '../database/database.module';
 import { Db } from '../database/connection';
 import { createPendingRequest, TimeOffRequest } from '../domain/request';
 import { hasSufficientBalance } from '../domain/balance';
+import { InsufficientBalanceError, InvalidDimensionError } from './errors';
 import { ApprovedDeductionsRepository } from './repositories/approved-deductions.repository';
 import { BalancesRepository } from './repositories/balances.repository';
 import { HoldsRepository } from './repositories/holds.repository';
 import { RequestsRepository } from './repositories/requests.repository';
-
-export class InvalidDimensionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'InvalidDimensionError';
-  }
-}
-
-export class InsufficientBalanceError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'InsufficientBalanceError';
-  }
-}
 
 export interface CreateRequestCommand {
   employeeId: string;

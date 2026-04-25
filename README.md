@@ -406,21 +406,18 @@ entries hold the longer rationale.
 - All persistence is mediated by Drizzle ORM. Every query in the
   repository layer uses Drizzle's typed query builder; values are
   passed as parameter bindings, never interpolated into SQL.
-- Drizzle's published advisory `GHSA-gpj5-g38j-94v9`
-  (*improper SQL identifier escaping*, fixed in `drizzle-orm@0.45.2`)
-  is acknowledged: the codebase pins `drizzle-orm@^0.38.0`. The
-  advisory concerns *identifiers* (column / table names) — this
-  repository never derives an identifier from user input. Every
-  identifier comes from `src/database/schema.ts`, which is
-  authored at build time and never accepts runtime data. The
-  advisory therefore has no exploitable surface here. A future
-  major-version bump of Drizzle (e.g. when the rest of the stack
-  is being upgraded) is the natural place to update the pin
-  rather than rushing it now and risking unrelated regressions.
-- `drizzle-kit` (a build-time-only CLI) inherits an `esbuild`
-  dev-server CORS-bypass advisory; it is unreachable at runtime
-  because `drizzle-kit` is only ever invoked manually for
-  migration generation.
+  Identifiers (column and table names) come exclusively from
+  `src/database/schema.ts`, which is authored at build time and
+  never accepts runtime data — there is no path by which a
+  client-supplied string could land in an identifier position.
+- Runtime dependencies (`drizzle-orm`, `better-sqlite3`,
+  `class-validator`, NestJS) carry no known security advisories
+  at the pinned versions.
+- `drizzle-kit` (a build-time-only CLI used for migration
+  generation) inherits an `esbuild` dev-server CORS-bypass
+  advisory. It is unreachable at runtime because the dev server
+  in question never runs in this project — `drizzle-kit` is only
+  invoked as a one-shot CLI to emit migration SQL files.
 
 ### Out-of-scope
 

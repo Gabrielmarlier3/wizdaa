@@ -148,11 +148,18 @@ export function createMockHcmServer(): Express {
         return;
       }
       case 'forceTimeout':
-        // Do not respond — let the client abort via its timeout.
-        // Hold the request open longer than any reasonable test
-        // timeout budget; the test runner's globalTeardown closes
-        // the server.
-        await new Promise((resolve) => setTimeout(resolve, 30_000));
+        // Do not respond — let the client abort via its bounded
+        // fetch timeout. Clear our 30s safety timer when the
+        // client closes the connection so Jest does not see a
+        // dangling handle after specs that exercised
+        // forceTimeout (audit defect 3).
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 30_000);
+          req.on('close', () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
         return;
       case 'forceBadShape': {
         const outcome: MutationOutcome = {

@@ -69,17 +69,15 @@ describe('outbox worker recovers requests stuck on transient HCM failures', () =
   }
 
   async function createPending(clientRequestId: string, employeeId: string) {
-    const res = await request(ctx.app.getHttpServer())
-      .post('/requests')
-      .send({
-        employeeId,
-        locationId: 'loc-BR',
-        leaveType: 'PTO',
-        startDate: '2026-05-01',
-        endDate: '2026-05-02',
-        days: 2,
-        clientRequestId,
-      });
+    const res = await request(ctx.app.getHttpServer()).post('/requests').send({
+      employeeId,
+      locationId: 'loc-BR',
+      leaveType: 'PTO',
+      startDate: '2026-05-01',
+      endDate: '2026-05-02',
+      days: 2,
+      clientRequestId,
+    });
     expect(res.status).toBe(201);
     return res.body as { id: string };
   }

@@ -176,9 +176,7 @@ describe('HcmOutboxWorker.tick()', () => {
       expect(markFailedRetryableMock).toHaveBeenCalledTimes(1);
       const [, reason, nextAt] = markFailedRetryableMock.mock.calls[0];
       expect(reason).toBe('HCM 500');
-      expect(nextAt).toBe(
-        new Date(fixedNow.getTime() + 30_000).toISOString(),
-      );
+      expect(nextAt).toBe(new Date(fixedNow.getTime() + 30_000).toISOString());
       expect(markFailedPermanentMock).not.toHaveBeenCalled();
       // hcmSyncStatus stays 'pending' — we are still retrying.
       expect(updateHcmSyncStatusMock).not.toHaveBeenCalled();
@@ -194,9 +192,7 @@ describe('HcmOutboxWorker.tick()', () => {
       await worker.tick();
 
       const [, , nextAt] = markFailedRetryableMock.mock.calls[0];
-      expect(nextAt).toBe(
-        new Date(fixedNow.getTime() + 120_000).toISOString(),
-      );
+      expect(nextAt).toBe(new Date(fixedNow.getTime() + 120_000).toISOString());
     });
 
     it('promotes to failed_permanent and flips hcmSyncStatus to "failed" when attempts reach MAX_ATTEMPTS', async () => {
@@ -309,7 +305,9 @@ describe('HcmOutboxWorker.tick()', () => {
       idempotencyKey: 'idem-newer',
       nextAttemptAt: '2026-04-24T00:00:10.000Z',
     });
-    const { worker, postMutationMock } = buildWorker({ dueRows: [older, newer] });
+    const { worker, postMutationMock } = buildWorker({
+      dueRows: [older, newer],
+    });
 
     await worker.tick();
 

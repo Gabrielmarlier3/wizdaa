@@ -98,9 +98,7 @@ describe('BalancesRepository batch writes', () => {
       ]);
     }
 
-    function dims(
-      ...employeeIds: string[]
-    ): BalanceDimension[] {
+    function dims(...employeeIds: string[]): BalanceDimension[] {
       return employeeIds.map((employeeId) => ({
         employeeId,
         locationId: 'loc-BR',
@@ -113,7 +111,9 @@ describe('BalancesRepository batch writes', () => {
 
       repo.deleteNotInSet(dims('emp-1', 'emp-3'));
 
-      const rows = allBalances().map((r) => r.employeeId).sort();
+      const rows = allBalances()
+        .map((r) => r.employeeId)
+        .sort();
       expect(rows).toEqual(['emp-1', 'emp-3']);
     });
 
@@ -145,7 +145,10 @@ describe('BalancesRepository batch writes', () => {
 
       const rows = allBalances();
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ employeeId: 'emp-1', locationId: 'loc-BR' });
+      expect(rows[0]).toMatchObject({
+        employeeId: 'emp-1',
+        locationId: 'loc-BR',
+      });
     });
 
     it('is safe against delimiter-like characters in identifier fields', () => {

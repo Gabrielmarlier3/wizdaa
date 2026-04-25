@@ -130,8 +130,18 @@ describe('BatchBalanceIntakeUseCase (integration)', () => {
     const result = await useCase.execute({
       generatedAt: '2026-04-24T12:00:00.000Z',
       balances: [
-        { employeeId: 'emp-1', locationId: 'loc-BR', leaveType: 'PTO', balance: 8 },
-        { employeeId: 'emp-2', locationId: 'loc-BR', leaveType: 'PTO', balance: 25 },
+        {
+          employeeId: 'emp-1',
+          locationId: 'loc-BR',
+          leaveType: 'PTO',
+          balance: 8,
+        },
+        {
+          employeeId: 'emp-2',
+          locationId: 'loc-BR',
+          leaveType: 'PTO',
+          balance: 25,
+        },
       ],
     });
 
@@ -150,7 +160,12 @@ describe('BatchBalanceIntakeUseCase (integration)', () => {
     const result = await useCase.execute({
       generatedAt: '2026-04-24T12:00:00.000Z',
       balances: [
-        { employeeId: 'emp-1', locationId: 'loc-BR', leaveType: 'PTO', balance: 4 },
+        {
+          employeeId: 'emp-1',
+          locationId: 'loc-BR',
+          leaveType: 'PTO',
+          balance: 4,
+        },
       ],
     });
 
@@ -177,7 +192,12 @@ describe('BatchBalanceIntakeUseCase (integration)', () => {
       generatedAt: '2026-04-24T12:00:00.000Z',
       balances: [
         // 10 − 6 = 4 >= 0, predicate does NOT fire → auto-clear.
-        { employeeId: 'emp-1', locationId: 'loc-BR', leaveType: 'PTO', balance: 10 },
+        {
+          employeeId: 'emp-1',
+          locationId: 'loc-BR',
+          leaveType: 'PTO',
+          balance: 10,
+        },
       ],
     });
 
@@ -205,7 +225,12 @@ describe('BatchBalanceIntakeUseCase (integration)', () => {
     await useCase.execute({
       generatedAt: '2026-04-24T12:00:00.000Z',
       balances: [
-        { employeeId: 'emp-new', locationId: 'loc-BR', leaveType: 'PTO', balance: 5 },
+        {
+          employeeId: 'emp-new',
+          locationId: 'loc-BR',
+          leaveType: 'PTO',
+          balance: 5,
+        },
       ],
     });
 
@@ -219,7 +244,12 @@ describe('BatchBalanceIntakeUseCase (integration)', () => {
     const input = {
       generatedAt: '2026-04-24T12:00:00.000Z',
       balances: [
-        { employeeId: 'emp-1', locationId: 'loc-BR', leaveType: 'PTO', balance: 4 },
+        {
+          employeeId: 'emp-1',
+          locationId: 'loc-BR',
+          leaveType: 'PTO',
+          balance: 4,
+        },
       ],
     };
     await useCase.execute(input);

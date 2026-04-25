@@ -1,14 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import {
-  balances,
-  hcmOutbox,
-  requests,
-} from '../../src/database/schema';
-import {
-  HcmOutboxWorker,
-  MAX_ATTEMPTS,
-} from '../../src/hcm/hcm-outbox-worker';
+import { balances, hcmOutbox, requests } from '../../src/database/schema';
+import { HcmOutboxWorker, MAX_ATTEMPTS } from '../../src/hcm/hcm-outbox-worker';
 import { buildTestApp, TestContext } from '../helpers/test-app';
 
 type Scenario =
@@ -169,7 +162,9 @@ describe('HcmOutboxWorker.tick() (e2e against real DB + mock HCM)', () => {
   });
 
   it('leaves a row failed_retryable with attempts incremented when HCM returns 500', async () => {
-    const { outboxId, requestId } = seedOutboxRow({ employeeId: 'emp-worker-500' });
+    const { outboxId, requestId } = seedOutboxRow({
+      employeeId: 'emp-worker-500',
+    });
     await setScenario('force500');
 
     await worker.tick();
@@ -186,7 +181,9 @@ describe('HcmOutboxWorker.tick() (e2e against real DB + mock HCM)', () => {
   });
 
   it('flips the row to failed_permanent and hcmSyncStatus=failed when HCM rejects permanently', async () => {
-    const { outboxId, requestId } = seedOutboxRow({ employeeId: 'emp-worker-perm' });
+    const { outboxId, requestId } = seedOutboxRow({
+      employeeId: 'emp-worker-perm',
+    });
     await setScenario('forcePermanent');
 
     await worker.tick();
@@ -198,7 +195,9 @@ describe('HcmOutboxWorker.tick() (e2e against real DB + mock HCM)', () => {
   });
 
   it('treats a 2xx with malformed body as a retryable transient failure', async () => {
-    const { outboxId, requestId } = seedOutboxRow({ employeeId: 'emp-worker-badshape' });
+    const { outboxId, requestId } = seedOutboxRow({
+      employeeId: 'emp-worker-badshape',
+    });
     await setScenario('forceBadShape');
 
     await worker.tick();

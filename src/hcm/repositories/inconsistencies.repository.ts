@@ -110,10 +110,7 @@ export class InconsistenciesRepository {
    * are JSON-encoded to be collision-safe across any field
    * values.
    */
-  deleteNotInSet(
-    keep: InconsistencyDimension[],
-    executor: Db = this.db,
-  ): void {
+  deleteNotInSet(keep: InconsistencyDimension[], executor: Db = this.db): void {
     const keepSet = new Set(keep.map(encodeDimensionKey));
     const existing = executor
       .select({

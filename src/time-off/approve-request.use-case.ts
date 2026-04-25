@@ -295,8 +295,14 @@ export class ApproveRequestUseCase {
   }
 
   private nextAttemptAt(): string {
-    // Minimal constant backoff for this slice; a future slice that
-    // adds the out-of-process worker may grow this into a schedule.
+    // Inline push schedules exactly one 30s retry. The worker
+    // (`HcmOutboxWorker`, plan 009) takes over from there with
+    // exponential backoff (30s × 2^attempts, max 5 attempts).
+    // The flat 30s here is deliberate: the inline path is best-
+    // effort post-commit and only ever runs once per approve, so
+    // there is no schedule to grow — the schedule is the worker's
+    // concern, and `BACKOFF_BASE_MS` in src/hcm/hcm-outbox-worker.ts
+    // is the single source of truth for the first-retry delay.
     return new Date(Date.now() + 30_000).toISOString();
   }
 }

@@ -764,3 +764,71 @@ entry, and the six subagent definitions under `.claude/agents/`.
 
 Commits: `f688660`, `f08168b`, `2e94848`, `80b70c3`. No plan
 archive (audit-driven cleanup, not a planned slice).
+
+## 2026-04-25 — Session 14: FINAL_INSTRUCTION audit defects fixed
+
+After session 13 wrapped, the user added `FINAL_INSTRUCTION.md`
+to the repo root and asked for one more independent-auditor
+pass. The audit ran in two takes — first a normal pass that ran
+every script in `package.json`, then a strict read-only re-run
+that proved the previous pass left the working tree byte-
+identical. Three defects were identified, all in HEAD `295ce1a`:
+
+- **Defect 1 (medium).** `tsconfig.build.json` did not exclude
+  `scripts/`, `drizzle.config.ts`, or `jest.config.ts`, so
+  `nest build` emitted `dist/jest.config.js`,
+  `dist/drizzle.config.js`, and the entire mock HCM under
+  `dist/scripts/hcm-mock/`. The mock has `/test/scenario` and
+  `/test/reset` endpoints designed to mutate state — shipping
+  it inside the production artefact is wasted bytes at best,
+  attack surface at worst.
+- **Defect 2 (low).** `docs/coverage.md` totals were stale at
+  125 tests; the actual count after audit-1 was 126.
+- **Defect 3 (low).** `npm run test:e2e` ended with the
+  "Jest did not exit one second after the test run has
+  completed" warning. Root cause: the mock HCM's `forceTimeout`
+  branch held an unconditional 30s `setTimeout` — when the
+  client aborted at 2s the timer kept running until natural
+  expiry, leaking a Node handle that Jest noticed.
+
+All three landed as standalone fix commits.
+
+**Fix-1 (`46669b4`) — tsconfig.build.json tightening.** Added
+`scripts`, `drizzle.config.ts`, `jest.config.ts` to the exclude
+list. Side effect: with only `src/` as input, TypeScript stops
+emitting the redundant `dist/src/` directory level — output is
+now flat (`dist/main.js`, `dist/app.module.js`,
+`dist/{balance,database,domain,hcm,time-off}/`). This matches
+what `nest-cli.json`'s `sourceRoot: "src"` already implied; the
+package.json's `start:prod: "node dist/main"` was already
+written for this layout. Verified by booting `node dist/main`
+against a migrated DB and probing `GET /requests/<uuid>` — 404
+REQUEST_NOT_FOUND as expected.
+
+**Fix-3 (`0ab95ba`) — mock forceTimeout timer cleanup.** Wrapped
+the 30s `setTimeout` in a Promise that resolves on either the
+timer firing OR `req.on('close')`, clearing the timer in the
+close handler. The mock now releases the handle as soon as the
+client aborts. `npm run test:e2e` exits cleanly with no warning;
+42 tests still pass.
+
+**Fix-2 (`b1ef697`) — coverage.md refresh.** Re-ran
+`npm run test:cov` and `npm run test:cov:e2e` under SHA
+`0ab95ba` and pasted the updated text-summary tables. Total now
+126 (84 + 42). Per-file aggregates drifted < 1 % so the
+"Signal vs targets" narrative survives unchanged.
+
+**Re-audit verification.** With the three fixes in HEAD, the
+strict read-only audit was re-run. The verdict moved from
+**PASS WITH ISSUES** to **PASS**: typecheck silent, lint clean,
+build emits only `src/` artefacts, unit/integration 84 green,
+e2e 42 green with **no Jest-did-not-exit warning**, every §15
+scenario covered, every §13 HCM scenario designed for, every
+documented endpoint live and behaving correctly.
+
+The two deferred nits from session 13 (clientRequestId not
+`@IsUUID()`, `resolveSyncStatus` async typing) remain
+deliberately deferred with the same rationale already on file.
+
+Commits: `46669b4`, `0ab95ba`, `b1ef697`. No plan archive
+(audit-driven cleanup).

@@ -264,6 +264,15 @@ Coverage targets are declared in [TRD.md](./TRD.md) §8: domain layer
 runs' summary tables, a breakdown of which uncovered lines are
 defensive code, and a regen recipe.
 
+`npm run lint` is wired with the ESLint `--fix` flag, so it can
+rewrite source files in-place when a formatting auto-fix is
+available. That is the intent for development; if you want a
+read-only check (e.g. inside CI), invoke ESLint directly:
+
+```bash
+npx eslint "{src,test,scripts}/**/*.ts"
+```
+
 ### Critical scenarios (INSTRUCTIONS.md §15)
 
 Every scenario §15 names is exercised by at least one spec. This
@@ -355,6 +364,76 @@ Artefacts:
 - [`CLAUDE.md`](./CLAUDE.md) — operational guardrails:
   subagent discipline, hard guardrails distilled from
   INSTRUCTIONS.md, language and tone rules.
+
+## Security considerations
+
+The submission email lists *"Security considerations and
+architectural decisions"* among the evaluation criteria. The notes
+below cover the explicit decisions; the corresponding TRD §9
+entries hold the longer rationale.
+
+### Defensive HCM integration (TRD §8.3 / §9 *Approval commits locally; HCM push via outbox*)
+
+- The `HcmClient` collapses every transport / HTTP outcome into a
+  three-branch discriminated union (`ok` / `permanent` / `transient`)
+  before returning to the use case. A 2xx with a malformed body is
+  treated as `transient`, not `ok` — the service never marks a
+  request synced on a response it cannot validate.
+- Local approval commits regardless of HCM availability. HCM-side
+  failures surface in the response body as `hcmSyncStatus`, not as
+  HTTP errors. This keeps the user-visible state consistent with
+  what the service actually decided, independently of HCM weather.
+- All idempotency keys are service-generated UUIDs sent in the
+  `Idempotency-Key` header. Retries reuse the stored key (never
+  freshly generate), so HCM's idempotent-replay contract is honoured
+  even across worker tick boundaries.
+
+### Input validation
+
+- Every HTTP DTO is validated by the global `ValidationPipe`
+  (`whitelist: true`, `forbidNonWhitelisted: true`,
+  `transform: true`). Unknown properties are dropped; required
+  properties are enforced; type coercion is explicit. Validation
+  failures surface as `400 Bad Request` with the standard Nest
+  envelope.
+- Path-param UUIDs are parsed by `ParseUUIDPipe`, so malformed UUIDs
+  return `400` before any handler runs.
+- Date-bounded fields are restricted to `YYYY-MM-DD` strings via
+  regex.
+
+### SQL safety
+
+- All persistence is mediated by Drizzle ORM. Every query in the
+  repository layer uses Drizzle's typed query builder; values are
+  passed as parameter bindings, never interpolated into SQL.
+- Drizzle's published advisory `GHSA-gpj5-g38j-94v9`
+  (*improper SQL identifier escaping*, fixed in `drizzle-orm@0.45.2`)
+  is acknowledged: the codebase pins `drizzle-orm@^0.38.0`. The
+  advisory concerns *identifiers* (column / table names) — this
+  repository never derives an identifier from user input. Every
+  identifier comes from `src/database/schema.ts`, which is
+  authored at build time and never accepts runtime data. The
+  advisory therefore has no exploitable surface here. A future
+  major-version bump of Drizzle (e.g. when the rest of the stack
+  is being upgraded) is the natural place to update the pin
+  rather than rushing it now and risking unrelated regressions.
+- `drizzle-kit` (a build-time-only CLI) inherits an `esbuild`
+  dev-server CORS-bypass advisory; it is unreachable at runtime
+  because `drizzle-kit` is only ever invoked manually for
+  migration generation.
+
+### Out-of-scope
+
+- **Authentication / authorisation.** The service exposes no auth
+  surface. The brief does not require it; an externally-fronted
+  deployment would put authentication at an upstream layer (API
+  gateway, mTLS, BFF) before this service. TRD §10 records this
+  as an open boundary.
+- **Rate limiting.** Same reasoning — out of scope for the
+  microservice level; the upstream layer owns it.
+- **Secret management.** No secrets ship in the repository. Env
+  vars are documented in the env-var table; none are required at
+  runtime against the mock HCM.
 
 ## Engineering principles
 
